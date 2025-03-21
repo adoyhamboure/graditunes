@@ -13,15 +13,44 @@ import {
   AudioPlayer,
   VoiceConnection,
 } from '@discordjs/voice';
-import { GuildMember, EmbedBuilder, TextChannel } from 'discord.js';
+import {
+  GuildMember,
+  EmbedBuilder,
+  TextChannel,
+  ChatInputCommandInteraction,
+} from 'discord.js';
 import * as ytdl from '@distube/ytdl-core';
 import { ConfigService } from '@nestjs/config';
 import { GuildQueue, QueueItem } from './types';
+import axios from 'axios';
+import * as fs from 'fs';
+import * as path from 'path';
+import * as os from 'os';
 
 interface Cookie {
   name: string;
   value: string;
   domain: string;
+}
+
+interface YouTubePlaylistResponse {
+  items: Array<{
+    contentDetails: {
+      itemCount: string;
+    };
+  }>;
+}
+
+interface YouTubePlaylistItemsResponse {
+  items: Array<{
+    snippet: {
+      resourceId: {
+        videoId: string;
+      };
+      title: string;
+    };
+  }>;
+  nextPageToken?: string;
 }
 
 @Injectable()
@@ -32,8 +61,15 @@ export class StreamingService implements OnModuleInit {
   private queues = new Map<string, GuildQueue>();
   private textChannels = new Map<string, TextChannel>();
   private agent: ytdl.Agent;
+  private tempDir: string;
 
-  constructor(private readonly configService: ConfigService) {}
+  constructor(private readonly configService: ConfigService) {
+    // Créer un dossier temporaire pour les fichiers audio
+    this.tempDir = path.join(os.tmpdir(), 'graditunes');
+    if (!fs.existsSync(this.tempDir)) {
+      fs.mkdirSync(this.tempDir);
+    }
+  }
 
   public onModuleInit(): void {
     this.logger.log('StreamingService has been initialized!');
@@ -111,31 +147,207 @@ export class StreamingService implements OnModuleInit {
   }
 
   private async createQueueItem(url: string): Promise<QueueItem> {
-    const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
-    const stream = ytdl(url, {
-      filter: 'audioonly',
-      quality: 'highestaudio',
-      highWaterMark: 1 << 25,
-      agent: this.agent,
-    });
+    const tempFile = path.join(this.tempDir, `${Date.now()}.js`);
+    try {
+      const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
+      const stream = ytdl(url, {
+        filter: 'audioonly',
+        quality: 'highestaudio',
+        highWaterMark: 1 << 25,
+        agent: this.agent,
+      });
 
-    const resource = createAudioResource(stream, {
-      inputType: StreamType.Arbitrary,
-      inlineVolume: true,
-    });
+      // Nettoyer le fichier temporaire après utilisation
+      stream.on('end', () => {
+        try {
+          if (fs.existsSync(tempFile)) {
+            fs.unlinkSync(tempFile);
+          }
+        } catch (error) {
+          this.logger.error(`Error deleting temp file: ${error}`);
+        }
+      });
 
-    if (resource.volume) {
-      resource.volume.setVolume(0.5);
+      const resource = createAudioResource(stream, {
+        inputType: StreamType.Arbitrary,
+        inlineVolume: true,
+      });
+
+      if (resource.volume) {
+        resource.volume.setVolume(0.5);
+      }
+
+      return {
+        title: videoInfo.videoDetails.title,
+        url,
+        resource,
+      };
+    } catch (error) {
+      // Si l'erreur est 403, essayer sans les cookies
+      if (
+        error instanceof Error &&
+        error.message.includes('Status code: 403')
+      ) {
+        const videoInfo = await ytdl.getBasicInfo(url);
+        const stream = ytdl(url, {
+          filter: 'audioonly',
+          quality: 'highestaudio',
+          highWaterMark: 1 << 25,
+        });
+
+        // Nettoyer le fichier temporaire après utilisation
+        stream.on('end', () => {
+          try {
+            if (fs.existsSync(tempFile)) {
+              fs.unlinkSync(tempFile);
+            }
+          } catch (error) {
+            this.logger.error(`Error deleting temp file: ${error}`);
+          }
+        });
+
+        const resource = createAudioResource(stream, {
+          inputType: StreamType.Arbitrary,
+          inlineVolume: true,
+        });
+
+        if (resource.volume) {
+          resource.volume.setVolume(0.5);
+        }
+
+        return {
+          title: videoInfo.videoDetails.title,
+          url,
+          resource,
+        };
+      }
+      throw error;
     }
-
-    return {
-      title: videoInfo.videoDetails.title,
-      url,
-      resource,
-    };
   }
 
-  private async createPlayer(guildId: string): Promise<AudioPlayer> {
+  private async handlePlaylist(
+    url: string,
+    interaction: ChatInputCommandInteraction,
+  ): Promise<QueueItem[]> {
+    try {
+      const playlistId = url.match(/[?&]list=([^&]+)/)?.[1];
+      if (!playlistId) {
+        throw new Error('Invalid playlist URL');
+      }
+
+      const apiKey = this.configService.get<string>('YOUTUBE_API_KEY');
+      if (!apiKey) {
+        throw new Error('YouTube API key not configured');
+      }
+
+      const items: QueueItem[] = [];
+      let nextPageToken: string | undefined;
+      let totalVideos = 0;
+      let processedVideos = 0;
+
+      // Première requête pour obtenir le nombre total de vidéos
+      const initialResponse = await axios.get<YouTubePlaylistResponse>(
+        `https://www.googleapis.com/youtube/v3/playlists`,
+        {
+          params: {
+            part: 'contentDetails',
+            id: playlistId,
+            key: apiKey,
+          },
+        },
+      );
+
+      if (initialResponse.data.items?.[0]?.contentDetails?.itemCount) {
+        totalVideos = parseInt(
+          initialResponse.data.items[0].contentDetails.itemCount,
+        );
+      }
+
+      await interaction.editReply(
+        `🎵 Chargement de la playlist... (0/${totalVideos} vidéos)`,
+      );
+
+      do {
+        const response = await axios.get<YouTubePlaylistItemsResponse>(
+          `https://www.googleapis.com/youtube/v3/playlistItems`,
+          {
+            params: {
+              part: 'snippet',
+              playlistId,
+              maxResults: 50,
+              key: apiKey,
+              pageToken: nextPageToken,
+            },
+          },
+        );
+
+        const videos = response.data.items;
+        if (!videos || videos.length === 0) {
+          break;
+        }
+
+        for (const video of videos) {
+          try {
+            const videoId = video.snippet.resourceId.videoId;
+            const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+            const videoInfo = await ytdl.getBasicInfo(videoUrl, {
+              agent: this.agent,
+            });
+            const stream = ytdl(videoUrl, {
+              filter: 'audioonly',
+              quality: 'highestaudio',
+              highWaterMark: 1 << 25,
+              agent: this.agent,
+            });
+
+            const resource = createAudioResource(stream, {
+              inputType: StreamType.Arbitrary,
+              inlineVolume: true,
+            });
+
+            if (resource.volume) {
+              resource.volume.setVolume(0.5);
+            }
+
+            items.push({
+              title: videoInfo.videoDetails.title,
+              url: videoUrl,
+              resource,
+            });
+
+            processedVideos++;
+            // Mettre à jour le message tous les 5 vidéos ou à la fin
+            if (processedVideos % 5 === 0 || processedVideos === totalVideos) {
+              const progress = Math.round(
+                (processedVideos / totalVideos) * 100,
+              );
+              await interaction.editReply(
+                `🎵 Chargement de la playlist... (${processedVideos}/${totalVideos} vidéos) - ${progress}%`,
+              );
+            }
+          } catch (error) {
+            this.logger.error(
+              `Error processing video ${video.snippet.title}: ${error}`,
+            );
+            processedVideos++;
+          }
+        }
+
+        nextPageToken = response.data.nextPageToken;
+      } while (nextPageToken);
+
+      if (items.length === 0) {
+        throw new Error('No videos found in playlist');
+      }
+
+      return items;
+    } catch (error) {
+      this.logger.error(`Error processing playlist: ${error}`);
+      throw error;
+    }
+  }
+
+  private createPlayer(guildId: string): AudioPlayer {
     const player = createAudioPlayer({
       behaviors: {
         noSubscriber: NoSubscriberBehavior.Play,
@@ -196,9 +408,16 @@ export class StreamingService implements OnModuleInit {
     }
   }
 
+  private isValidYoutubeUrl(url: string): boolean {
+    const videoPattern = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
+    const playlistPattern =
+      /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+playlist\?list=.+$/;
+    return videoPattern.test(url) || playlistPattern.test(url);
+  }
+
   @SlashCommand({
     name: 'play',
-    description: 'Plays a song from YouTube',
+    description: 'Joue une chanson ou une playlist depuis YouTube',
   })
   public async onPlay(
     @Context() [interaction]: SlashCommandContext,
@@ -206,7 +425,7 @@ export class StreamingService implements OnModuleInit {
   ): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'This command can only be used in a server.',
+        content: 'Cette commande ne peut être utilisée que dans un serveur.',
         ephemeral: true,
       });
       return;
@@ -220,7 +439,7 @@ export class StreamingService implements OnModuleInit {
 
       if (!voiceChannel) {
         await interaction.editReply(
-          'You must be in a voice channel to use this command!',
+          'Vous devez être dans un canal vocal pour utiliser cette commande !',
         );
         return;
       }
@@ -234,14 +453,12 @@ export class StreamingService implements OnModuleInit {
       }
 
       // Validate URL
-      if (!ytdl.validateURL(url)) {
-        await interaction.editReply('Please provide a valid YouTube URL.');
+      if (!this.isValidYoutubeUrl(url)) {
+        await interaction.editReply(
+          'Veuillez fournir une URL YouTube ou une URL de playlist valide.',
+        );
         return;
       }
-
-      // Get video info
-      const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
-      const songTitle = videoInfo.videoDetails.title;
 
       // Handle existing connection
       let connection = this.connections.get(interaction.guildId || '');
@@ -270,7 +487,7 @@ export class StreamingService implements OnModuleInit {
       // Create or get player
       let player = this.players.get(interaction.guildId || '');
       if (!player) {
-        player = await this.createPlayer(interaction.guildId || '');
+        player = this.createPlayer(interaction.guildId || '');
       }
 
       // Wait for connection to be ready
@@ -278,17 +495,14 @@ export class StreamingService implements OnModuleInit {
         await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
       } catch {
         this.logger.error('Connection failed to become ready');
-        throw new Error('Failed to join voice channel');
+        throw new Error('Échec de la connexion au canal vocal');
       }
 
       // Subscribe to player
       const subscription = connection.subscribe(player);
       if (!subscription) {
-        throw new Error('Failed to subscribe to the player');
+        throw new Error('Échec de la souscription au lecteur');
       }
-
-      // Create queue item
-      const queueItem = await this.createQueueItem(url);
 
       // Initialize or get queue
       let queue = this.queues.get(interaction.guildId || '');
@@ -302,39 +516,68 @@ export class StreamingService implements OnModuleInit {
         }
       }
 
-      // Add to queue
-      queue.items.push(queueItem);
+      // Check if it's a playlist
+      const isPlaylist = url.includes('playlist?list=');
+      let items: QueueItem[] = [];
+
+      if (isPlaylist) {
+        items = await this.handlePlaylist(url, interaction);
+        if (items.length === 0) {
+          await interaction.editReply(
+            "Aucune vidéo n'a pu être chargée depuis la playlist.",
+          );
+          return;
+        }
+      } else {
+        const queueItem = await this.createQueueItem(url);
+        items = [queueItem];
+      }
+
+      // Add items to queue
+      queue.items.push(...items);
 
       // If this is the first item or no music is currently playing, start playing
       if (
-        queue.items.length === 1 ||
+        queue.items.length === items.length ||
         player.state.status === AudioPlayerStatus.Idle
       ) {
         await this.playNext(interaction.guildId || '');
-        await interaction.editReply(`🎵 Now playing: **${songTitle}**`);
+        if (isPlaylist) {
+          await interaction.editReply(
+            `🎵 Playlist chargée avec succès ! ${items.length} titres dans la file d'attente.`,
+          );
+        } else {
+          await interaction.deleteReply();
+        }
       } else {
-        await interaction.editReply(`🎵 Added to queue: **${songTitle}**`);
+        if (isPlaylist) {
+          await interaction.editReply(
+            `🎵 Playlist chargée avec succès ! ${items.length} titres ajoutés à la file d'attente.`,
+          );
+        } else {
+          await interaction.deleteReply();
+        }
       }
     } catch (error) {
       this.logger.error(
         `Error playing music: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
       await interaction.editReply(
-        `An error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Une erreur est survenue: ${error instanceof Error ? error.message : 'Erreur inconnue'}`,
       );
     }
   }
 
   @SlashCommand({
     name: 'skip',
-    description: 'Skip the current song and play the next one in the queue',
+    description: "Passe à la chanson suivante dans la file d'attente",
   })
   public async onSkip(
     @Context() [interaction]: SlashCommandContext,
   ): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'This command can only be used in a server.',
+        content: 'Cette commande ne peut être utilisée que dans un serveur.',
         ephemeral: true,
       });
       return;
@@ -344,38 +587,44 @@ export class StreamingService implements OnModuleInit {
     const player = this.players.get(interaction.guildId || '');
 
     if (!queue || !player) {
-      await interaction.reply('There is no music playing!');
+      await interaction.reply("Aucune musique n'est en cours de lecture !");
       return;
     }
 
     try {
+      // Vérifier si c'est la dernière chanson
+      if (queue.currentIndex >= queue.items.length - 1) {
+        player.stop();
+        await interaction.reply(
+          "⏭️ Dernière chanson de la file d'attente. Arrêt de la lecture.",
+        );
+        return;
+      }
+
       queue.currentIndex++;
       await this.playNext(interaction.guildId || '');
 
-      const currentSong = queue.items[queue.currentIndex];
-      await interaction.reply(
-        `⏭️ Skipped to the next song!\n🎵 Now playing: **${currentSong.title}**`,
-      );
+      await interaction.reply('⏭️ Passage à la chanson suivante !');
     } catch (error) {
       this.logger.error(
         `Error skipping song: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
       await interaction.reply(
-        `An error occurred: ${error instanceof Error ? error.message : 'Unknown error'}`,
+        `Une erreur est survenue: ${error instanceof Error ? error.message : 'Erreur inconnue'}`,
       );
     }
   }
 
   @SlashCommand({
     name: 'stop',
-    description: 'Stops playback and leaves the voice channel',
+    description: 'Arrête la lecture et quitte le canal vocal',
   })
   public async onStop(
     @Context() [interaction]: SlashCommandContext,
   ): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'This command can only be used in a server.',
+        content: 'Cette commande ne peut être utilisée que dans un serveur.',
         ephemeral: true,
       });
       return;
@@ -385,7 +634,7 @@ export class StreamingService implements OnModuleInit {
     const player = this.players.get(interaction.guildId || '');
 
     if (!connection) {
-      await interaction.reply("I'm not connected to a voice channel!");
+      await interaction.reply('Je ne suis pas connecté à un canal vocal !');
       return;
     }
 
@@ -406,7 +655,7 @@ export class StreamingService implements OnModuleInit {
       this.connections.delete(interaction.guildId);
     }
 
-    await interaction.reply('Stopped playback and left the voice channel.');
+    await interaction.reply('Lecture arrêtée et déconnexion du canal vocal.');
   }
 
   @SlashCommand({
@@ -445,15 +694,60 @@ export class StreamingService implements OnModuleInit {
     // Afficher les chansons suivantes
     const upcomingSongs = queue.items.slice(queue.currentIndex + 1);
     if (upcomingSongs.length > 0) {
-      const upcomingList = upcomingSongs
-        .map((song, index) => `${index + 1}. **${song.title}**`)
-        .join('\n');
-      embed.addFields({
-        name: '⏭️ Chansons suivantes',
-        value: upcomingList,
-      });
+      // Diviser les chansons en groupes de 10
+      const songsPerField = 10;
+      for (let i = 0; i < upcomingSongs.length; i += songsPerField) {
+        const chunk = upcomingSongs.slice(i, i + songsPerField);
+        const chunkList = chunk
+          .map((song, index) => `${i + index + 1}. **${song.title}**`)
+          .join('\n');
+
+        embed.addFields({
+          name: `⏭️ Chansons suivantes (${i + 1}-${Math.min(i + songsPerField, upcomingSongs.length)})`,
+          value: chunkList,
+        });
+      }
     }
 
     await interaction.reply({ embeds: [embed] });
+  }
+
+  @SlashCommand({
+    name: 'clear_queue',
+    description: "Vide complètement la file d'attente",
+  })
+  public async onClearQueue(
+    @Context() [interaction]: SlashCommandContext,
+  ): Promise<void> {
+    if (!interaction.guild) {
+      await interaction.reply({
+        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        ephemeral: true,
+      });
+      return;
+    }
+
+    const queue = this.queues.get(interaction.guildId || '');
+
+    if (!queue || queue.items.length === 0) {
+      await interaction.reply("La file d'attente est déjà vide !");
+      return;
+    }
+
+    try {
+      // Garder uniquement la chanson en cours de lecture
+      const currentSong = queue.items[queue.currentIndex];
+      queue.items = [currentSong];
+      queue.currentIndex = 0;
+
+      await interaction.reply("🗑️ La file d'attente a été vidée !");
+    } catch (error) {
+      this.logger.error(
+        `Error clearing queue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      await interaction.reply(
+        `Une erreur est survenue: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+    }
   }
 }
