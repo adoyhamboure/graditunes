@@ -19,4 +19,17 @@ export interface BlindtestState {
   currentQuestionIndex: number;
   scores: Map<string, number>;
   blindtest: Blindtest | null;
+  isQuestionSolved: boolean;
+  currentMessageId?: string;
+}
+
+export interface Question {
+  url: string;
+  acceptable_answers: string[];
+  meta: {
+    type: string;
+    source: string;
+    title: string;
+    composer: string;
+  };
 }

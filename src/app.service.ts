@@ -1,9 +1,12 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { Context, On, Once, ContextOf } from 'necord';
+import { BlindtestService } from './commands/blindtest/blindtest.service';
 
 @Injectable()
 export class AppService {
   private readonly logger = new Logger(AppService.name);
+
+  constructor(private readonly blindtestService: BlindtestService) {}
 
   @Once('ready')
   public onReady(@Context() [client]: ContextOf<'ready'>) {
@@ -13,5 +16,17 @@ export class AppService {
   @On('warn')
   public onWarn(@Context() [message]: ContextOf<'warn'>) {
     this.logger.warn(message);
+  }
+
+  @On('interactionCreate')
+  public async onInteractionCreate(
+    @Context() [interaction]: ContextOf<'interactionCreate'>,
+  ) {
+    if (
+      interaction.isModalSubmit() &&
+      interaction.customId === 'answer_modal'
+    ) {
+      await this.blindtestService.handleAnswerModal(interaction);
+    }
   }
 }

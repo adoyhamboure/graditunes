@@ -5,6 +5,13 @@ import {
   ChatInputCommandInteraction,
   TextChannel,
   GuildMember,
+  ButtonBuilder,
+  ButtonStyle,
+  ActionRowBuilder,
+  ModalBuilder,
+  TextInputBuilder,
+  TextInputStyle,
+  ModalSubmitInteraction,
 } from 'discord.js';
 import { Blindtest, BlindtestState } from './types';
 import { StreamingService } from '../streaming/streaming.service';
@@ -29,6 +36,7 @@ export class BlindtestService implements OnModuleInit {
         currentQuestionIndex: 0,
         scores: new Map(),
         blindtest: null,
+        isQuestionSolved: false,
       });
     }
     return this.blindtestStates.get(guildId)!;
@@ -141,8 +149,35 @@ export class BlindtestService implements OnModuleInit {
     if (!interaction.guild) return;
 
     const state = this.getBlindtestState(interaction.guild.id);
+    state.isQuestionSolved = false; // Réinitialiser l'état pour la nouvelle question
     const currentQuestion =
       state.blindtest!.questions[state.currentQuestionIndex];
+
+    // Afficher les scores actuels
+    if (interaction.channel?.isTextBased()) {
+      const textChannel = interaction.channel as TextChannel;
+      const scoresEmbed = new EmbedBuilder()
+        .setTitle('🎯 Scores actuels')
+        .setColor('#00ff00');
+
+      const scores = Array.from(state.scores.entries()).sort(
+        (a, b) => b[1] - a[1],
+      );
+
+      if (scores.length > 0) {
+        for (const [userId, score] of scores) {
+          const user = await interaction.client.users.fetch(userId);
+          scoresEmbed.addFields({
+            name: user.username,
+            value: `${score} points`,
+          });
+        }
+      } else {
+        scoresEmbed.setDescription('Aucun point marqué pour le moment');
+      }
+
+      await textChannel.send({ embeds: [scoresEmbed] });
+    }
 
     // Jouer la musique directement avec playMusic
     if (interaction.guildId && interaction.member && interaction.guild) {
@@ -190,20 +225,68 @@ export class BlindtestService implements OnModuleInit {
       }
     }
 
-    // Envoyer le message avec les instructions
+    // Créer le bouton de réponse
+    const answerButton = new ButtonBuilder()
+      .setCustomId('answer_question')
+      .setLabel('Répondre')
+      .setStyle(ButtonStyle.Primary)
+      .setEmoji('✍️');
+
+    const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+      answerButton,
+    );
+
+    // Envoyer le message avec les instructions et le bouton
     if (interaction.channel?.isTextBased()) {
       const textChannel = interaction.channel as TextChannel;
       const questionEmbed = new EmbedBuilder()
         .setTitle('🎵 Question en cours')
         .setDescription(
-          `Question ${state.currentQuestionIndex + 1}/${state.blindtest!.questions.length}\nUtilisez la commande \`/answer\` pour répondre !`,
+          `Question ${state.currentQuestionIndex + 1}/${state.blindtest!.questions.length}\nCliquez sur le bouton ci-dessous pour répondre !`,
         )
         .setColor('#0099ff');
 
-      await textChannel.send({ embeds: [questionEmbed] });
+      const message = await textChannel.send({
+        embeds: [questionEmbed],
+        components: [row],
+      });
+
+      // Stocker le message ID dans l'état
+      state.currentMessageId = message.id;
+
+      // Ajouter le gestionnaire de bouton
+      const collector = message.createMessageComponentCollector({
+        time: 20000,
+      });
+
+      collector.on('collect', (i) => {
+        if (i.customId === 'answer_question' && !state.isQuestionSolved) {
+          const modal = new ModalBuilder()
+            .setCustomId('answer_modal')
+            .setTitle('Répondre à la question');
+
+          const answerInput = new TextInputBuilder()
+            .setCustomId('answer_input')
+            .setLabel('Votre réponse')
+            .setStyle(TextInputStyle.Short)
+            .setRequired(true)
+            .setMaxLength(100);
+
+          const firstActionRow =
+            new ActionRowBuilder<TextInputBuilder>().addComponents(answerInput);
+          modal.addComponents(firstActionRow);
+
+          void i.showModal(modal);
+        }
+      });
+
+      collector.on('end', () => {
+        // Supprimer le bouton une fois le temps écoulé
+        void message.edit({ components: [] });
+      });
     }
 
-    // Attendre 5 secondes avant de passer à la question suivante
+    // Attendre 20 secondes avant de passer à la question suivante
     setTimeout(() => {
       if (state.isActive) {
         const correctAnswer = currentQuestion.meta.source;
@@ -225,11 +308,14 @@ export class BlindtestService implements OnModuleInit {
           // Utiliser le canal de texte pour envoyer un message
           if (interaction.channel?.isTextBased()) {
             const textChannel = interaction.channel as TextChannel;
-            void textChannel.send('🎵 Question suivante...');
-          }
+            void textChannel.send('🎵 Question suivante dans 5 secondes...');
 
-          // Jouer la question suivante
-          void this.playCurrentQuestion(interaction);
+            // Attendre 5 secondes
+            setTimeout(() => {
+              void textChannel.send('🎵 Question suivante...');
+              void this.playCurrentQuestion(interaction);
+            }, 5000);
+          }
         } else {
           // Arrêter la musique avant de terminer le blindtest
           if (interaction.guildId) {
@@ -241,7 +327,7 @@ export class BlindtestService implements OnModuleInit {
           void this.endBlindtest(interaction);
         }
       }
-    }, 5000);
+    }, 20000);
   }
 
   private async endBlindtest(
@@ -312,6 +398,98 @@ export class BlindtestService implements OnModuleInit {
 
       await interaction.reply({
         content: '✅ Correct ! +1 point',
+        flags: 64, // Ephemeral
+      });
+    } else {
+      await interaction.reply({
+        content: '❌ Incorrect, essayez encore !',
+        flags: 64, // Ephemeral
+      });
+    }
+  }
+
+  // Nouvelle méthode pour gérer les réponses du modal
+  public async handleAnswerModal(
+    interaction: ModalSubmitInteraction,
+  ): Promise<void> {
+    if (!interaction.guild) {
+      await interaction.reply({
+        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        flags: 64, // Ephemeral
+      });
+      return;
+    }
+
+    const state = this.getBlindtestState(interaction.guild.id);
+    if (!state.isActive || !state.blindtest) {
+      await interaction.reply({
+        content: "Aucun blindtest n'est en cours.",
+        flags: 64, // Ephemeral
+      });
+      return;
+    }
+
+    const currentQuestion =
+      state.blindtest.questions[state.currentQuestionIndex];
+    const userAnswer = interaction.fields.getTextInputValue('answer_input');
+
+    // Vérifier si la réponse est correcte avec une distance de Levenshtein acceptable
+    const isCorrect = currentQuestion.acceptable_answers.some(
+      (answer) => distance(userAnswer.toLowerCase(), answer.toLowerCase()) <= 2,
+    );
+
+    if (isCorrect && !state.isQuestionSolved) {
+      state.isQuestionSolved = true;
+      const currentScore = state.scores.get(interaction.user.id) || 0;
+      state.scores.set(interaction.user.id, currentScore + 1);
+
+      // Désactiver le bouton dans le message
+      if (interaction.channel?.isTextBased() && state.currentMessageId) {
+        try {
+          const textChannel = interaction.channel as TextChannel;
+          const message = await textChannel.messages.fetch(
+            state.currentMessageId,
+          );
+          if (message) {
+            const disabledButton = new ButtonBuilder()
+              .setCustomId('answer_question')
+              .setLabel('Répondu')
+              .setStyle(ButtonStyle.Secondary)
+              .setEmoji('✅')
+              .setDisabled(true);
+
+            const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
+              disabledButton,
+            );
+            await message.edit({ components: [row] });
+          }
+        } catch (error) {
+          this.logger.error(
+            `Erreur lors de la désactivation du bouton: ${error}`,
+          );
+        }
+      }
+
+      // Envoyer un message public pour la bonne réponse
+      if (interaction.channel?.isTextBased()) {
+        const textChannel = interaction.channel as TextChannel;
+        const correctAnswerEmbed = new EmbedBuilder()
+          .setTitle('🎉 Bonne réponse !')
+          .setDescription(
+            `${interaction.user.username} a trouvé la bonne réponse !`,
+          )
+          .setColor('#00ff00');
+
+        void textChannel.send({ embeds: [correctAnswerEmbed] });
+      }
+
+      await interaction.reply({
+        content: '✅ Correct ! +1 point',
+        flags: 64, // Ephemeral
+      });
+    } else if (state.isQuestionSolved) {
+      await interaction.reply({
+        content: '❌ Cette question a déjà été résolue !',
         flags: 64, // Ephemeral
       });
     } else {
