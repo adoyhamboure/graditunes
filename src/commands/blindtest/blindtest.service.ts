@@ -12,6 +12,7 @@ import {
   TextInputBuilder,
   TextInputStyle,
   ModalSubmitInteraction,
+  StringSelectMenuBuilder,
 } from 'discord.js';
 import { BlindtestState } from './types';
 import { StreamingService } from '../streaming/streaming.service';
@@ -42,6 +43,7 @@ export class BlindtestService implements OnModuleInit {
         blindtest: null,
         isQuestionSolved: false,
         duration: 30, // Durée par défaut de 30 secondes
+        difficulty: 'moyen', // Difficulté par défaut
       });
     }
     return this.blindtestStates.get(guildId)!;
@@ -62,73 +64,159 @@ export class BlindtestService implements OnModuleInit {
       return;
     }
 
-    const modal = new ModalBuilder()
-      .setCustomId('blindtest_prepare_modal')
-      .setTitle('Configuration du Blindtest');
+    // Créer le menu de sélection de difficulté
+    const difficultySelect = new StringSelectMenuBuilder()
+      .setCustomId('difficulty_select')
+      .setPlaceholder('Sélectionnez la difficulté')
+      .addOptions([
+        {
+          label: 'Facile',
+          description: 'Questions simples et reconnaissables',
+          value: 'facile',
+        },
+        {
+          label: 'Moyen',
+          description: 'Questions moyennement difficiles',
+          value: 'moyen',
+        },
+        {
+          label: 'Difficile',
+          description: 'Questions pour les experts',
+          value: 'difficile',
+        },
+        {
+          label: 'Impossible',
+          description: 'Questions extrêmement difficiles',
+          value: 'impossible',
+        },
+      ]);
 
-    const durationInput = new TextInputBuilder()
-      .setCustomId('duration_input')
-      .setLabel('Durée par question (en secondes)')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setValue('30')
-      .setMaxLength(3);
-
-    const promptInput = new TextInputBuilder()
-      .setCustomId('prompt_input')
-      .setLabel('Thème du blindtest')
-      .setPlaceholder('ex: musique de jeux vidéo')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setMaxLength(100);
-
-    const questionCountInput = new TextInputBuilder()
-      .setCustomId('question_count_input')
-      .setLabel('Nombre de questions')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setValue('10')
-      .setMaxLength(2);
-
-    const answerTypeInput = new TextInputBuilder()
-      .setCustomId('answer_type_input')
-      .setLabel('Type de réponse attendu')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setPlaceholder('ex: nom du jeu, artiste, titre de la musique')
-      .setMaxLength(50);
-
-    const difficultyInput = new TextInputBuilder()
-      .setCustomId('difficulty_input')
-      .setLabel('Difficulté')
-      .setStyle(TextInputStyle.Short)
-      .setRequired(true)
-      .setValue('moyen')
-      .setPlaceholder('facile, moyen, difficile, impossible')
-      .setMaxLength(10);
-
-    const firstActionRow =
-      new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput);
-    const secondActionRow =
-      new ActionRowBuilder<TextInputBuilder>().addComponents(promptInput);
-    const thirdActionRow =
-      new ActionRowBuilder<TextInputBuilder>().addComponents(
-        questionCountInput,
-      );
-    const fourthActionRow =
-      new ActionRowBuilder<TextInputBuilder>().addComponents(answerTypeInput);
-    const fifthActionRow =
-      new ActionRowBuilder<TextInputBuilder>().addComponents(difficultyInput);
-
-    modal.addComponents(
-      firstActionRow,
-      secondActionRow,
-      thirdActionRow,
-      fourthActionRow,
-      fifthActionRow,
+    const row = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+      difficultySelect,
     );
 
-    await interaction.showModal(modal);
+    // Créer l'embed d'information
+    const embed = new EmbedBuilder()
+      .setTitle('🎮 Configuration du Blindtest')
+      .setDescription(
+        "Sélectionnez d'abord la difficulté, puis remplissez le formulaire.",
+      )
+      .setColor('#0099ff');
+
+    // Envoyer le message avec le menu de sélection
+    const message = await interaction.reply({
+      embeds: [embed],
+      components: [row],
+      flags: 64,
+    });
+
+    // Créer le collector pour le menu de sélection
+    const collector = message.createMessageComponentCollector({
+      time: 60000, // 1 minute
+    });
+
+    collector.on('collect', (i) => {
+      if (i.customId === 'difficulty_select' && 'values' in i) {
+        const difficulty = i.values[0];
+        const state = this.getBlindtestState(i.guildId!);
+        state.difficulty = difficulty;
+
+        // Créer le modal avec la difficulté sélectionnée
+        const modal = new ModalBuilder()
+          .setCustomId('blindtest_prepare_modal')
+          .setTitle('Configuration du Blindtest');
+
+        const durationInput = new TextInputBuilder()
+          .setCustomId('duration_input')
+          .setLabel('Durée par question (en secondes)')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue('30')
+          .setMaxLength(3);
+
+        const promptInput = new TextInputBuilder()
+          .setCustomId('prompt_input')
+          .setLabel('Thème du blindtest')
+          .setPlaceholder('ex: musique de jeux vidéo')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setMaxLength(100);
+
+        const questionCountInput = new TextInputBuilder()
+          .setCustomId('question_count_input')
+          .setLabel('Nombre de questions')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setValue('10')
+          .setMaxLength(2);
+
+        const answerTypeInput = new TextInputBuilder()
+          .setCustomId('answer_type_input')
+          .setLabel('Type de réponse attendu')
+          .setStyle(TextInputStyle.Short)
+          .setRequired(true)
+          .setPlaceholder('ex: nom du jeu, artiste, titre de la musique')
+          .setMaxLength(50);
+
+        const firstActionRow =
+          new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput);
+        const secondActionRow =
+          new ActionRowBuilder<TextInputBuilder>().addComponents(promptInput);
+        const thirdActionRow =
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            questionCountInput,
+          );
+        const fourthActionRow =
+          new ActionRowBuilder<TextInputBuilder>().addComponents(
+            answerTypeInput,
+          );
+
+        modal.addComponents(
+          firstActionRow,
+          secondActionRow,
+          thirdActionRow,
+          fourthActionRow,
+        );
+
+        void i.showModal(modal);
+      }
+    });
+
+    collector.on('end', () => {
+      // Désactiver le menu de sélection une fois le temps écoulé
+      const disabledSelect = new StringSelectMenuBuilder()
+        .setCustomId('difficulty_select')
+        .setPlaceholder('Sélectionnez la difficulté')
+        .addOptions([
+          {
+            label: 'Facile',
+            description: 'Questions simples et reconnaissables',
+            value: 'facile',
+          },
+          {
+            label: 'Moyen',
+            description: 'Questions moyennement difficiles',
+            value: 'moyen',
+          },
+          {
+            label: 'Difficile',
+            description: 'Questions pour les experts',
+            value: 'difficile',
+          },
+          {
+            label: 'Impossible',
+            description: 'Questions extrêmement difficiles',
+            value: 'impossible',
+          },
+        ])
+        .setDisabled(true);
+
+      const disabledRow =
+        new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
+          disabledSelect,
+        );
+      void interaction.editReply({ components: [disabledRow] });
+    });
   }
 
   public async handleBlindtestPrepareModal(
@@ -154,7 +242,6 @@ export class BlindtestService implements OnModuleInit {
     );
     const answerType =
       interaction.fields.getTextInputValue('answer_type_input');
-    const difficulty = interaction.fields.getTextInputValue('difficulty_input');
 
     if (isNaN(duration) || duration < 10 || duration > 300) {
       await interaction.reply({
@@ -190,12 +277,12 @@ export class BlindtestService implements OnModuleInit {
         prompt,
         questionCount,
         answerType,
-        difficulty,
+        state.difficulty,
       );
 
       if (interaction.channel?.isTextBased()) {
         const textChannel = interaction.channel as TextChannel;
-        await textChannel.send('🔍 Recherche des vidéos YouTube...');
+        await textChannel.send('Recherche des vidéos YouTube...');
       }
 
       // Pour chaque question, chercher une URL YouTube correspondante
@@ -253,7 +340,7 @@ export class BlindtestService implements OnModuleInit {
       const embed = new EmbedBuilder()
         .setTitle('🎮 Blindtest Prêt !')
         .setDescription(
-          `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**\nType de réponse attendu: **${blindtest.answerType}**\nDifficulté: **${difficulty}**\nVidéos trouvées: **${foundVideos}/${blindtest.questions.length}**`,
+          `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**\nType de réponse attendu: **${blindtest.answerType}**\nDifficulté: **${state.difficulty}**\nVidéos trouvées: **${foundVideos}/${blindtest.questions.length}**`,
         )
         .setColor('#00ff00');
 

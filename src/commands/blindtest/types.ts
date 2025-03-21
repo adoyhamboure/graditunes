@@ -34,6 +34,7 @@ export interface BlindtestState {
   currentMessageId?: string;
   currentTimeout?: NodeJS.Timeout;
   duration: number;
+  difficulty: string;
 }
 
 export interface Question {

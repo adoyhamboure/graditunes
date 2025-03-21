@@ -31,11 +31,91 @@ export class DeepseekService {
     answerType: string,
     difficulty: string,
   ): Promise<Blindtest> {
-    try {
-      this.logger.log(
-        `Generating blindtest with prompt: ${prompt}, ${questionCount} questions, answer type: ${answerType}, difficulty: ${difficulty}`,
-      );
+    this.logger.log(
+      `Generating blindtest with prompt: ${prompt}, questionCount: ${questionCount}, answerType: ${answerType}, difficulty: ${difficulty}`,
+    );
 
+    const systemPrompt = `You are a music expert and blindtest question generator. Your task is to create a JSON object that matches the following schema:
+
+{
+  "theme": "string - The main theme of the blindtest (e.g., 'musique pop des années 80', 'rap français', 'musique de jeux vidéo', 'jazz classique')",
+  "answerType": "string - The type of answer expected (e.g., 'nom du jeu', 'artiste', 'titre de la musique', 'nom du groupe')",
+  "questions": [
+    {
+      "meta": {
+        "type": "string - The type of media (e.g., 'game', 'movie', 'anime', 'album', 'single', 'concert')",
+        "source": "string - The source of the media (e.g., 'Final Fantasy VII', 'The Beatles', 'Michael Jackson', 'Daft Punk')",
+        "title": "string - The title of the specific piece (e.g., 'Aerith's Theme', 'Billie Jean', 'Get Lucky')",
+        "composer": "string - The composer, artist, or band of the piece"
+      },
+      "acceptable_answers": ["array of strings - All possible correct answers"],
+      "displayableAnswer": "string - The answer to display when the question is solved"
+    }
+  ]
+}
+
+Important rules:
+1. DO NOT include any URLs in the response
+2. The 'title' field should contain the specific piece title, not the album or artist name
+3. The 'source' field should contain the album, artist, game, movie, or other source name
+4. The 'displayableAnswer' should be the most common or official name of the piece
+5. Include multiple acceptable answers in 'acceptable_answers' to account for variations
+6. Make sure the difficulty matches the requested level (${difficulty})
+7. The answerType should match the requested type (${answerType})
+8. Adapt the questions to the requested theme, whether it's video game music, pop, rap, classical, or any other genre
+9. For traditional music (pop, rap, etc.), use 'album' or 'single' as the type and the artist/band name as the source
+10. For video game music, use 'game' as the type and the game name as the source
+11. For movie music, use 'movie' as the type and the movie name as the source
+
+JSON Format Rules:
+1. Return ONLY the raw JSON object, without any markdown code blocks (\`\`\`json or \`\`\`)
+2. Do not include any explanatory text before or after the JSON
+3. Ensure all strings are properly escaped
+4. Make sure all arrays and objects are properly closed
+5. The JSON must be valid and parseable
+
+Examples of correct structure:
+1. For a video game music:
+   {
+     "meta": {
+       "type": "game",
+       "source": "Final Fantasy VII",
+       "title": "Aerith's Theme",
+       "composer": "Nobuo Uematsu"
+     },
+     "acceptable_answers": ["Final Fantasy VII", "FF7", "FFVII"],
+     "displayableAnswer": "Final Fantasy VII"
+   }
+
+2. For a pop song:
+   {
+     "meta": {
+       "type": "single",
+       "source": "Michael Jackson",
+       "title": "Billie Jean",
+       "composer": "Michael Jackson"
+     },
+     "acceptable_answers": ["Billie Jean", "Billy Jean"],
+     "displayableAnswer": "Billie Jean"
+   }
+
+3. For a movie soundtrack:
+   {
+     "meta": {
+       "type": "movie",
+       "source": "Star Wars: Episode IV",
+       "title": "Imperial March",
+       "composer": "John Williams"
+     },
+     "acceptable_answers": ["Star Wars", "Star Wars Episode IV", "A New Hope"],
+     "displayableAnswer": "Star Wars: Episode IV - A New Hope"
+   }
+
+IMPORTANT: Always follow this structure exactly. The 'title' field must contain the specific piece title, not the game/movie/album name. The 'source' field must contain the game/movie/album/artist name. Return ONLY the raw JSON object without any markdown formatting.`;
+
+    const userPrompt = `Generate a blindtest with ${questionCount} questions about ${prompt}. The answers should be of type: ${answerType}. The difficulty should be: ${difficulty}.`;
+
+    try {
       const response = await fetch(
         'https://api.deepseek.com/v1/chat/completions',
         {
@@ -49,43 +129,15 @@ export class DeepseekService {
             messages: [
               {
                 role: 'system',
-                content: `You are a music expert. Generate a music quiz (blindtest) in JSON format with the following schema:
-              {
-                "theme": string,
-                "answerType": string,
-                "questions": [
-                  {
-                    "meta": {
-                      "type": string,
-                      "source": string,
-                      "title": string,
-                      "composer": string
-                    },
-                    "acceptable_answers": string[],
-                    "displayableAnswer": string
-                  }
-                ]
-              }
-              The theme should match the provided prompt.
-              The answerType should match the provided answer type (e.g., "game name", "artist", "song title").
-              The difficulty should match the provided difficulty level:
-              - "facile": Very recognizable and popular pieces, easy to identify
-              - "moyen": Moderately difficult pieces, some might be less known
-              - "difficile": Challenging pieces, might include less popular or more complex music
-              - "impossible": Extremely difficult pieces, very obscure or complex music
-              For each question, provide various acceptable answers that match the answerType.
-              The displayableAnswer should be the most obvious/clear answer among the acceptable_answers.
-              IMPORTANT: Do not include any URLs in the response. The URLs will be added later by the application.
-              IMPORTANT: Generate exactly ${questionCount} questions.
-              IMPORTANT: Return only the JSON, without backticks or code markers.`,
+                content: systemPrompt,
               },
               {
                 role: 'user',
-                content: `Theme: ${prompt}\nAnswer type: ${answerType}\nDifficulty: ${difficulty}`,
+                content: userPrompt,
               },
             ],
             temperature: 0.7,
-            max_tokens: 1000,
+            max_tokens: 2000,
           }),
         },
       );
@@ -107,9 +159,13 @@ export class DeepseekService {
       );
 
       const content = data.choices[0].message.content;
-      this.logger.log(`Content from Deepseek: ${content}`);
+      this.logger.log(`Deepseek response: ${content}`);
 
-      // Nettoyer le contenu des backticks et marqueurs de code si présents
+      if (!content) {
+        throw new Error('No content in Deepseek response');
+      }
+
+      // Nettoyer le contenu des marqueurs de code Markdown
       const cleanContent = content
         .replace(/```json\n?/g, '')
         .replace(/```\n?/g, '')
@@ -123,12 +179,12 @@ export class DeepseekService {
           `Successfully parsed blindtest: ${JSON.stringify(blindtest, null, 2)}`,
         );
         return blindtest;
-      } catch (parseError) {
-        this.logger.error(`Error parsing JSON: ${parseError}`);
+      } catch (parseError: unknown) {
+        const errorMessage =
+          parseError instanceof Error ? parseError.message : String(parseError);
+        this.logger.error(`Error parsing JSON: ${errorMessage}`);
         this.logger.error(`Content that failed to parse: ${cleanContent}`);
-        throw new Error(
-          `Invalid JSON response from Deepseek: ${parseError.message}`,
-        );
+        throw new Error(`Invalid JSON response from Deepseek: ${errorMessage}`);
       }
     } catch (error) {
       this.logger.error(`Error generating blindtest: ${error}`);
