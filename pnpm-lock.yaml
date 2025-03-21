@@ -15,8 +15,8 @@ importers:
         specifier: ^0.18.0
         version: 0.18.0(@discordjs/opus@0.10.0)(ffmpeg-static@5.2.0)
       '@distube/ytdl-core':
-        specifier: ^4.16.4
-        version: 4.16.4
+        specifier: ^4.16.5
+        version: 4.16.5
       '@nestjs/common':
         specifier: ^11.0.1
         version: 11.0.10(reflect-metadata@0.2.2)(rxjs@7.8.2)
@@ -361,8 +361,8 @@ packages:
     resolution: {integrity: sha512-PBvenhZG56a6tMWF/f4P6f4GxZKJTBG95n7aiGSPTnodmz4N5g60t79rSIAq7ywMbv8A4jFtexMruH+oe51aQQ==}
     engines: {node: '>=16.11.0'}
 
-  '@distube/ytdl-core@4.16.4':
-    resolution: {integrity: sha512-r0ZPMMB5rbUSQSez//dYDWjPSAEOm6eeV+9gyR+1vngGYFUi953Z/CoF4epTBS40X8dR32gyH3ERlh7NbnCaRg==}
+  '@distube/ytdl-core@4.16.5':
+    resolution: {integrity: sha512-sl84k2iNVJSiONR+ZpXJOYKBqx4wnH/VrNClsQbMR7fIveBxLZnd6eBRP8IE6mwyaJTbbc7JEHarGB2i8eNH6A==}
     engines: {node: '>=20.18.1'}
 
   '@eslint-community/eslint-utils@4.4.1':
@@ -4038,7 +4038,7 @@ snapshots:
       - bufferutil
       - utf-8-validate
 
-  '@distube/ytdl-core@4.16.4':
+  '@distube/ytdl-core@4.16.5':
     dependencies:
       http-cookie-agent: 6.0.8(tough-cookie@5.1.1)(undici@7.3.0)
       https-proxy-agent: 7.0.6
