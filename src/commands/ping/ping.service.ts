@@ -1,5 +1,5 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
-import { Arguments, Context, SlashCommand, SlashCommandContext } from 'necord';
+import { Context, SlashCommand, SlashCommandContext } from 'necord';
 
 @Injectable()
 export class PingService implements OnModuleInit {
