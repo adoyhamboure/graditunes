@@ -4,11 +4,11 @@ import {
   EmbedBuilder,
   ChatInputCommandInteraction,
   TextChannel,
+  GuildMember,
 } from 'discord.js';
 import { Blindtest, BlindtestState } from './types';
 import { StreamingService } from '../streaming/streaming.service';
 import { distance } from 'fastest-levenshtein';
-import { PlayDto } from '../streaming/play.dto';
 import { AnswerDto } from './answer.dto';
 
 @Injectable()
@@ -44,7 +44,7 @@ export class BlindtestService implements OnModuleInit {
     if (!interaction.guild) {
       await interaction.reply({
         content: 'Cette commande ne peut être utilisée que dans un serveur.',
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
       return;
     }
@@ -107,7 +107,7 @@ export class BlindtestService implements OnModuleInit {
     if (!interaction.guild) {
       await interaction.reply({
         content: 'Cette commande ne peut être utilisée que dans un serveur.',
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
       return;
     }
@@ -118,7 +118,7 @@ export class BlindtestService implements OnModuleInit {
       await interaction.reply({
         content:
           "Aucun blindtest n'est préparé. Utilisez `/blindtest-prepare` d'abord.",
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
       return;
     }
@@ -126,7 +126,7 @@ export class BlindtestService implements OnModuleInit {
     if (state.isActive) {
       await interaction.reply({
         content: 'Un blindtest est déjà en cours !',
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
       return;
     }
@@ -144,13 +144,19 @@ export class BlindtestService implements OnModuleInit {
     const currentQuestion =
       state.blindtest!.questions[state.currentQuestionIndex];
 
-    // Jouer la musique
-    const playDto = new PlayDto();
-    playDto.url = currentQuestion.url;
-    await this.streamingService.onPlay(
-      [interaction] as SlashCommandContext,
-      playDto,
-    );
+    // Jouer la musique directement avec playMusic
+    if (interaction.guildId && interaction.member && interaction.guild) {
+      const member = interaction.member as GuildMember;
+      const voiceChannel = member.voice.channel;
+      if (voiceChannel) {
+        void this.streamingService.playMusic(
+          interaction.guildId,
+          voiceChannel.id,
+          currentQuestion.url,
+          { voiceAdapterCreator: interaction.guild.voiceAdapterCreator },
+        );
+      }
+    }
 
     // Envoyer le message avec les instructions
     if (interaction.channel?.isTextBased()) {
@@ -165,7 +171,7 @@ export class BlindtestService implements OnModuleInit {
       await textChannel.send({ embeds: [questionEmbed] });
     }
 
-    // Attendre 30 secondes avant de passer à la question suivante
+    // Attendre 5 secondes avant de passer à la question suivante
     setTimeout(() => {
       if (state.isActive) {
         const correctAnswer = currentQuestion.meta.source;
@@ -184,12 +190,26 @@ export class BlindtestService implements OnModuleInit {
         // Passer à la question suivante
         state.currentQuestionIndex++;
         if (state.currentQuestionIndex < state.blindtest!.questions.length) {
+          // Utiliser le canal de texte pour envoyer un message
+          if (interaction.channel?.isTextBased()) {
+            const textChannel = interaction.channel as TextChannel;
+            void textChannel.send('🎵 Question suivante...');
+          }
+
+          // Jouer la question suivante
           void this.playCurrentQuestion(interaction);
         } else {
+          // Arrêter la musique avant de terminer le blindtest
+          if (interaction.guildId) {
+            const player = this.streamingService.getPlayer(interaction.guildId);
+            if (player) {
+              player.stop();
+            }
+          }
           void this.endBlindtest(interaction);
         }
       }
-    }, 30000);
+    }, 5000);
   }
 
   private async endBlindtest(
@@ -231,7 +251,7 @@ export class BlindtestService implements OnModuleInit {
     if (!interaction.guild) {
       await interaction.reply({
         content: 'Cette commande ne peut être utilisée que dans un serveur.',
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
       return;
     }
@@ -240,7 +260,7 @@ export class BlindtestService implements OnModuleInit {
     if (!state.isActive || !state.blindtest) {
       await interaction.reply({
         content: "Aucun blindtest n'est en cours.",
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
       return;
     }
@@ -260,12 +280,12 @@ export class BlindtestService implements OnModuleInit {
 
       await interaction.reply({
         content: '✅ Correct ! +1 point',
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
     } else {
       await interaction.reply({
         content: '❌ Incorrect, essayez encore !',
-        ephemeral: true,
+        flags: 64, // Ephemeral
       });
     }
   }

@@ -71,6 +71,10 @@ export class StreamingService implements OnModuleInit {
     }
   }
 
+  public getPlayer(guildId: string): AudioPlayer | undefined {
+    return this.players.get(guildId);
+  }
+
   public onModuleInit(): void {
     this.logger.log('StreamingService has been initialized!');
     this.agent = ytdl.createAgent(this.buildYoutubeCookies());
@@ -415,6 +419,79 @@ export class StreamingService implements OnModuleInit {
     return videoPattern.test(url) || playlistPattern.test(url);
   }
 
+  public async playMusic(
+    guildId: string,
+    voiceChannelId: string,
+    url: string,
+    guild: { voiceAdapterCreator: (guild: any) => any },
+  ): Promise<void> {
+    try {
+      // Handle existing connection
+      let connection = this.connections.get(guildId);
+      if (connection) {
+        if (connection.state.status === VoiceConnectionStatus.Destroyed) {
+          this.connections.delete(guildId);
+          connection = undefined;
+        }
+      }
+
+      // Create new connection
+      if (!connection) {
+        connection = joinVoiceChannel({
+          channelId: voiceChannelId,
+          guildId: guildId,
+          adapterCreator: guild.voiceAdapterCreator,
+          selfDeaf: true,
+          selfMute: false,
+        });
+        this.connections.set(guildId, connection);
+      }
+
+      // Create or get player
+      let player = this.players.get(guildId);
+      if (!player) {
+        player = this.createPlayer(guildId);
+      }
+
+      // Wait for connection to be ready
+      try {
+        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
+      } catch {
+        this.logger.error('Connection failed to become ready');
+        throw new Error('Échec de la connexion au canal vocal');
+      }
+
+      // Subscribe to player
+      const subscription = connection.subscribe(player);
+      if (!subscription) {
+        throw new Error('Échec de la souscription au lecteur');
+      }
+
+      // Initialize or get queue
+      let queue = this.queues.get(guildId);
+      if (!queue) {
+        queue = {
+          items: [],
+          currentIndex: 0,
+        };
+        this.queues.set(guildId, queue);
+      }
+
+      // Create queue item
+      const queueItem = await this.createQueueItem(url);
+      queue.items = [queueItem];
+      queue.currentIndex = 0;
+
+      // Start playing
+      await this.playNext(guildId);
+    } catch (error) {
+      this.logger.error(
+        `Error playing music: ${error instanceof Error ? error.message : 'Unknown error'}`,
+      );
+      throw error;
+    }
+  }
+
   @SlashCommand({
     name: 'play',
     description: 'Joue une chanson ou une playlist depuis YouTube',
@@ -460,103 +537,28 @@ export class StreamingService implements OnModuleInit {
         return;
       }
 
-      // Handle existing connection
-      let connection = this.connections.get(interaction.guildId || '');
-      if (connection) {
-        if (connection.state.status === VoiceConnectionStatus.Destroyed) {
-          this.connections.delete(interaction.guildId || '');
-          connection = undefined;
-        }
-      }
-
-      // Create new connection
-      if (!connection) {
-        if (!interaction.guildId) {
-          throw new Error('Guild ID is required');
-        }
-        connection = joinVoiceChannel({
-          channelId: voiceChannel.id,
-          guildId: interaction.guildId,
-          adapterCreator: interaction.guild.voiceAdapterCreator,
-          selfDeaf: true,
-          selfMute: false,
-        });
-        this.connections.set(interaction.guildId, connection);
-      }
-
-      // Create or get player
-      let player = this.players.get(interaction.guildId || '');
-      if (!player) {
-        player = this.createPlayer(interaction.guildId || '');
-      }
-
-      // Wait for connection to be ready
-      try {
-        await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
-      } catch {
-        this.logger.error('Connection failed to become ready');
-        throw new Error('Échec de la connexion au canal vocal');
-      }
-
-      // Subscribe to player
-      const subscription = connection.subscribe(player);
-      if (!subscription) {
-        throw new Error('Échec de la souscription au lecteur');
-      }
-
-      // Initialize or get queue
-      let queue = this.queues.get(interaction.guildId || '');
-      if (!queue) {
-        queue = {
-          items: [],
-          currentIndex: 0,
-        };
-        if (interaction.guildId) {
-          this.queues.set(interaction.guildId, queue);
-        }
-      }
-
       // Check if it's a playlist
       const isPlaylist = url.includes('playlist?list=');
-      let items: QueueItem[] = [];
-
       if (isPlaylist) {
-        items = await this.handlePlaylist(url, interaction);
+        const items = await this.handlePlaylist(url, interaction);
         if (items.length === 0) {
           await interaction.editReply(
             "Aucune vidéo n'a pu être chargée depuis la playlist.",
           );
           return;
         }
+        // Handle playlist...
       } else {
-        const queueItem = await this.createQueueItem(url);
-        items = [queueItem];
-      }
-
-      // Add items to queue
-      queue.items.push(...items);
-
-      // If this is the first item or no music is currently playing, start playing
-      if (
-        queue.items.length === items.length ||
-        player.state.status === AudioPlayerStatus.Idle
-      ) {
-        await this.playNext(interaction.guildId || '');
-        if (isPlaylist) {
-          await interaction.editReply(
-            `🎵 Playlist chargée avec succès ! ${items.length} titres dans la file d'attente.`,
-          );
-        } else {
-          await interaction.deleteReply();
+        if (!interaction.guildId) {
+          throw new Error('Guild ID is required');
         }
-      } else {
-        if (isPlaylist) {
-          await interaction.editReply(
-            `🎵 Playlist chargée avec succès ! ${items.length} titres ajoutés à la file d'attente.`,
-          );
-        } else {
-          await interaction.deleteReply();
-        }
+        await this.playMusic(
+          interaction.guildId,
+          voiceChannel.id,
+          url,
+          interaction.guild,
+        );
+        await interaction.deleteReply();
       }
     } catch (error) {
       this.logger.error(
