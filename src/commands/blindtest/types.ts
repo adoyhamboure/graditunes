@@ -21,6 +21,7 @@ export interface BlindtestState {
   blindtest: Blindtest | null;
   isQuestionSolved: boolean;
   currentMessageId?: string;
+  currentTimeout?: NodeJS.Timeout;
 }
 
 export interface Question {

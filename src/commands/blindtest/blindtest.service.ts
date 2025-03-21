@@ -150,21 +150,28 @@ export class BlindtestService implements OnModuleInit {
 
     const state = this.getBlindtestState(interaction.guild.id);
     state.isQuestionSolved = false; // Réinitialiser l'état pour la nouvelle question
+
+    // Nettoyer le timeout précédent s'il existe
+    if (state.currentTimeout) {
+      clearTimeout(state.currentTimeout);
+      state.currentTimeout = undefined;
+    }
+
     const currentQuestion =
       state.blindtest!.questions[state.currentQuestionIndex];
 
     // Afficher les scores actuels
     if (interaction.channel?.isTextBased()) {
       const textChannel = interaction.channel as TextChannel;
-      const scoresEmbed = new EmbedBuilder()
-        .setTitle('🎯 Scores actuels')
-        .setColor('#00ff00');
-
       const scores = Array.from(state.scores.entries()).sort(
         (a, b) => b[1] - a[1],
       );
 
-      if (scores.length > 0) {
+      if (scores.length > 0 && scores.some(([, score]) => score > 0)) {
+        const scoresEmbed = new EmbedBuilder()
+          .setTitle('🎯 Scores actuels')
+          .setColor('#00ff00');
+
         for (const [userId, score] of scores) {
           const user = await interaction.client.users.fetch(userId);
           scoresEmbed.addFields({
@@ -172,11 +179,9 @@ export class BlindtestService implements OnModuleInit {
             value: `${score} points`,
           });
         }
-      } else {
-        scoresEmbed.setDescription('Aucun point marqué pour le moment');
-      }
 
-      await textChannel.send({ embeds: [scoresEmbed] });
+        await textChannel.send({ embeds: [scoresEmbed] });
+      }
     }
 
     // Jouer la musique directement avec playMusic
@@ -287,7 +292,7 @@ export class BlindtestService implements OnModuleInit {
     }
 
     // Attendre 20 secondes avant de passer à la question suivante
-    setTimeout(() => {
+    state.currentTimeout = setTimeout(() => {
       if (state.isActive) {
         const correctAnswer = currentQuestion.meta.source;
         const embed = new EmbedBuilder()
@@ -408,7 +413,89 @@ export class BlindtestService implements OnModuleInit {
     }
   }
 
-  // Nouvelle méthode pour gérer les réponses du modal
+  private checkAllPlayersAnswered(
+    interaction: ModalSubmitInteraction,
+    state: BlindtestState,
+  ): boolean {
+    if (!interaction.guild) return false;
+
+    const voiceChannel = (interaction.member as GuildMember).voice.channel;
+    if (!voiceChannel) return false;
+
+    // Obtenir tous les membres du salon vocal
+    const voiceMembers = voiceChannel.members;
+
+    // Vérifier si tous les membres ont répondu correctement
+    for (const [memberId, member] of voiceMembers) {
+      // Ignorer les bots
+      if (member.user.bot) continue;
+
+      // Vérifier si le membre a des points dans le score
+      if (!state.scores.has(memberId)) {
+        return false;
+      }
+    }
+
+    return true;
+  }
+
+  private async handleAllPlayersAnswered(
+    interaction: ModalSubmitInteraction,
+    state: BlindtestState,
+  ): Promise<void> {
+    if (!interaction.guild) return;
+
+    const textChannel = interaction.channel as TextChannel;
+    const currentQuestion =
+      state.blindtest!.questions[state.currentQuestionIndex];
+
+    const embed = new EmbedBuilder()
+      .setTitle('🎉 Tous les joueurs ont trouvé la réponse !')
+      .setDescription(
+        `La réponse était : **${currentQuestion.meta.source}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
+      )
+      .setColor('#00ff00');
+
+    await textChannel.send({ embeds: [embed] });
+
+    // Attendre 5 secondes
+    await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    // Passer à la question suivante ou terminer le blindtest
+    state.currentQuestionIndex++;
+    if (state.currentQuestionIndex < state.blindtest!.questions.length) {
+      await textChannel.send('🎵 Question suivante...');
+      // Créer un ChatInputCommandInteraction factice pour playCurrentQuestion
+      const fakeInteraction = {
+        ...interaction,
+        guild: interaction.guild,
+        guildId: interaction.guildId,
+        channel: interaction.channel,
+        member: interaction.member,
+        client: interaction.client,
+      } as unknown as ChatInputCommandInteraction;
+      await this.playCurrentQuestion(fakeInteraction);
+    } else {
+      // Arrêter la musique avant de terminer le blindtest
+      if (interaction.guildId) {
+        const player = this.streamingService.getPlayer(interaction.guildId);
+        if (player) {
+          player.stop();
+        }
+      }
+      // Créer un ChatInputCommandInteraction factice pour endBlindtest
+      const fakeInteraction = {
+        ...interaction,
+        guild: interaction.guild,
+        guildId: interaction.guildId,
+        channel: interaction.channel,
+        member: interaction.member,
+        client: interaction.client,
+      } as unknown as ChatInputCommandInteraction;
+      await this.endBlindtest(fakeInteraction);
+    }
+  }
+
   public async handleAnswerModal(
     interaction: ModalSubmitInteraction,
   ): Promise<void> {
@@ -487,6 +574,15 @@ export class BlindtestService implements OnModuleInit {
         content: '✅ Correct ! +1 point',
         flags: 64, // Ephemeral
       });
+
+      // Vérifier si tous les joueurs ont répondu
+      const allPlayersAnswered = this.checkAllPlayersAnswered(
+        interaction,
+        state,
+      );
+      if (allPlayersAnswered) {
+        await this.handleAllPlayersAnswered(interaction, state);
+      }
     } else if (state.isQuestionSolved) {
       await interaction.reply({
         content: '❌ Cette question a déjà été résolue !',
