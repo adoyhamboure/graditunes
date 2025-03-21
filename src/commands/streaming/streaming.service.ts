@@ -547,11 +547,27 @@ export class StreamingService implements OnModuleInit {
 
       // Create queue item
       const queueItem = await this.createQueueItem(url);
-      queue.items = [queueItem];
-      queue.currentIndex = 0;
 
-      // Start playing
-      await this.playNext(guildId);
+      // Si aucune musique n'est en cours de lecture, démarrer la nouvelle
+      if (
+        queue.items.length === 0 ||
+        player.state.status === AudioPlayerStatus.Idle
+      ) {
+        queue.items = [queueItem];
+        queue.currentIndex = 0;
+        // Start playing
+        await this.playNext(guildId);
+      } else {
+        // Sinon, ajouter à la file d'attente
+        queue.items.push(queueItem);
+        // Afficher un message dans le canal de texte
+        const textChannel = this.textChannels.get(guildId);
+        if (textChannel) {
+          await textChannel.send(
+            `✅ **${queueItem.title}** a été ajouté à la file d'attente !`,
+          );
+        }
+      }
     } catch (error) {
       this.logger.error(
         `Error playing music: ${error instanceof Error ? error.message : 'Unknown error'}`,

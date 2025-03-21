@@ -47,6 +47,7 @@ export class BlindtestService implements OnModuleInit {
         duration: 30, // Durée par défaut de 30 secondes
         difficulty: 'moyen', // Difficulté par défaut
         aiProvider: 'deepseek', // IA par défaut
+        answeredPlayers: new Set(), // Initialiser le Set vide
       });
     }
     return this.blindtestStates.get(guildId)!;
@@ -507,7 +508,8 @@ export class BlindtestService implements OnModuleInit {
     if (!interaction.guild) return;
 
     const state = this.getBlindtestState(interaction.guild.id);
-    state.isQuestionSolved = false; // Réinitialiser l'état pour la nouvelle question
+    state.isQuestionSolved = false;
+    state.answeredPlayers.clear(); // Réinitialiser le Set pour la nouvelle question
 
     // Vérifier si le blindtest est toujours actif
     if (!state.isActive) {
@@ -814,8 +816,8 @@ export class BlindtestService implements OnModuleInit {
       // Ignorer les bots
       if (member.user.bot) continue;
 
-      // Vérifier si le membre a des points dans le score
-      if (!state.scores.has(memberId)) {
+      // Vérifier si le membre a répondu à la question actuelle
+      if (!state.answeredPlayers.has(memberId)) {
         return false;
       }
     }
@@ -891,7 +893,7 @@ export class BlindtestService implements OnModuleInit {
     if (!interaction.guild) {
       await interaction.reply({
         content: 'Cette commande ne peut être utilisée que dans un serveur.',
-        flags: 64, // Ephemeral
+        flags: 64,
       });
       return;
     }
@@ -900,7 +902,7 @@ export class BlindtestService implements OnModuleInit {
     if (!state.isActive || !state.blindtest) {
       await interaction.reply({
         content: "Aucun blindtest n'est en cours.",
-        flags: 64, // Ephemeral
+        flags: 64,
       });
       return;
     }
@@ -918,6 +920,7 @@ export class BlindtestService implements OnModuleInit {
       state.isQuestionSolved = true;
       const currentScore = state.scores.get(interaction.user.id) || 0;
       state.scores.set(interaction.user.id, currentScore + 1);
+      state.answeredPlayers.add(interaction.user.id); // Ajouter le joueur à la liste des réponses
 
       // Désactiver le bouton dans le message
       if (interaction.channel?.isTextBased() && state.currentMessageId) {
@@ -961,7 +964,7 @@ export class BlindtestService implements OnModuleInit {
 
       await interaction.reply({
         content: '✅ Correct ! +1 point',
-        flags: 64, // Ephemeral
+        flags: 64,
       });
 
       // Vérifier si tous les joueurs ont répondu
@@ -975,12 +978,12 @@ export class BlindtestService implements OnModuleInit {
     } else if (state.isQuestionSolved) {
       await interaction.reply({
         content: '❌ Cette question a déjà été résolue !',
-        flags: 64, // Ephemeral
+        flags: 64,
       });
     } else {
       await interaction.reply({
         content: '❌ Incorrect, essayez encore !',
-        flags: 64, // Ephemeral
+        flags: 64,
       });
     }
   }

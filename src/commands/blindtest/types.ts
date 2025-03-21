@@ -38,6 +38,7 @@ export interface BlindtestState {
   duration: number;
   difficulty: string;
   aiProvider: 'deepseek' | 'gpt';
+  answeredPlayers: Set<string>;
 }
 
 export interface Question {
