@@ -1,5 +1,6 @@
 export interface BlindtestQuestion {
   url: string;
+  youtubeSearch: string;
   acceptable_answers: string[];
   meta: {
     type: string;
@@ -20,6 +21,7 @@ export interface Blindtest {
       composer: string;
     };
     url?: string;
+    youtubeSearch: string;
     acceptable_answers: string[];
     displayableAnswer: string;
   }>;
@@ -40,6 +42,7 @@ export interface BlindtestState {
 
 export interface Question {
   url: string;
+  youtubeSearch: string;
   acceptable_answers: string[];
   meta: {
     type: string;

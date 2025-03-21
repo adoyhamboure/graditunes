@@ -379,7 +379,7 @@ export class BlindtestService implements OnModuleInit {
 
         for (const question of batch) {
           try {
-            const searchQuery = `${question.meta.title} ${question.meta.composer}`;
+            const searchQuery = `${question.youtubeSearch}`;
             this.logger.log(`Recherche YouTube pour: ${searchQuery}`);
 
             const videoUrl =
@@ -553,13 +553,23 @@ export class BlindtestService implements OnModuleInit {
       const voiceChannel = member.voice.channel;
       if (voiceChannel) {
         try {
-          if (!currentQuestion.url) {
+          let videoUrl = currentQuestion.url;
+
+          // Si l'URL n'est pas définie, rechercher la vidéo avec youtubeSearch
+          if (!videoUrl && currentQuestion.youtubeSearch) {
+            videoUrl = await this.streamingService.searchAndGetVideoUrl(
+              currentQuestion.youtubeSearch,
+            );
+          }
+
+          if (!videoUrl) {
             throw new Error('URL de la musique non définie');
           }
+
           await this.streamingService.playMusic(
             interaction.guildId,
             voiceChannel.id,
-            currentQuestion.url,
+            videoUrl,
             { voiceAdapterCreator: interaction.guild.voiceAdapterCreator },
           );
         } catch (error) {

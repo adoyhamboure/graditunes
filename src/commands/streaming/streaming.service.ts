@@ -846,21 +846,22 @@ export class StreamingService implements OnModuleInit {
       // Ajouter un délai entre les requêtes pour éviter de surcharger l'API
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
-      const response = await axios.get<YouTubeSearchResponse>(
-        `https://www.googleapis.com/youtube/v3/search`,
-        {
-          params: {
-            part: 'snippet',
-            q: searchQuery,
-            type: 'video',
-            maxResults: 1,
-            key: apiKey,
-            regionCode: 'FR', // Limiter les résultats à la France
-            videoEmbeddable: 'true', // Uniquement les vidéos qui peuvent être intégrées
-            videoDuration: 'short,medium', // Uniquement les vidéos courtes et moyennes
-          },
-        },
-      );
+      const url = `https://www.googleapis.com/youtube/v3/search`;
+      const params = {
+        part: 'snippet',
+        q: searchQuery,
+        type: 'video',
+        maxResults: 1,
+        key: apiKey,
+        regionCode: 'FR',
+        videoEmbeddable: 'true',
+        videoDuration: 'medium',
+        order: 'relevance',
+      };
+
+      this.logger.debug(`Paramètres: ${JSON.stringify(params)}`);
+
+      const response = await axios.get<YouTubeSearchResponse>(url, { params });
 
       if (response.data.items && response.data.items.length > 0) {
         const videoId = response.data.items[0].id.videoId;
@@ -869,6 +870,14 @@ export class StreamingService implements OnModuleInit {
 
       throw new Error('Aucune vidéo trouvée');
     } catch (error) {
+      if (axios.isAxiosError(error)) {
+        this.logger.error(
+          `Erreur YouTube API: ${error.response?.status} - ${error.response?.statusText}`,
+        );
+        this.logger.error(
+          `Détails de l'erreur: ${JSON.stringify(error.response?.data)}`,
+        );
+      }
       this.logger.error(`Error searching for video: ${error}`);
       throw error;
     }

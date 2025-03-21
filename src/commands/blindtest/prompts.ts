@@ -11,6 +11,7 @@ export const BLINDTEST_SYSTEM_PROMPT = `You are a music expert and blindtest que
         "title": "string - The title of the specific piece (e.g., 'Aerith's Theme', 'Billie Jean', 'Get Lucky')",
         "composer": "string - The composer, artist, or band of the piece"
       },
+      "youtubeSearch": "string - A precise search query to find the original audio on YouTube. Follow these rules:\n- For traditional music (pop, rap, etc.): use 'artist title audio' (e.g., 'The Beatles Hey Jude audio')\n- For video game/movie/anime music: use 'game/movie/anime title ost' (e.g., 'Final Fantasy VII Aerith's Theme ost')\n- DO NOT include composer names as it may lead to orchestral versions\n- DO NOT include years or album names unless absolutely necessary\n- DO NOT use quotes or special characters\n- DO NOT add 'original' or 'official' as it may limit results",
       "acceptable_answers": ["array of strings - All possible correct answers"],
       "displayableAnswer": "string - The answer to display when the question is solved"
     }
