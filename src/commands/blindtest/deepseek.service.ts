@@ -29,10 +29,11 @@ export class DeepseekService {
     prompt: string,
     questionCount: number,
     answerType: string,
+    difficulty: string,
   ): Promise<Blindtest> {
     try {
       this.logger.log(
-        `Generating blindtest with prompt: ${prompt}, ${questionCount} questions, answer type: ${answerType}`,
+        `Generating blindtest with prompt: ${prompt}, ${questionCount} questions, answer type: ${answerType}, difficulty: ${difficulty}`,
       );
 
       const response = await fetch(
@@ -67,15 +68,20 @@ export class DeepseekService {
               }
               The theme should match the provided prompt.
               The answerType should match the provided answer type (e.g., "game name", "artist", "song title").
+              The difficulty should match the provided difficulty level:
+              - "facile": Very recognizable and popular pieces, easy to identify
+              - "moyen": Moderately difficult pieces, some might be less known
+              - "difficile": Challenging pieces, might include less popular or more complex music
+              - "impossible": Extremely difficult pieces, very obscure or complex music
               For each question, provide various acceptable answers that match the answerType.
               The displayableAnswer should be the most obvious/clear answer among the acceptable_answers.
-              Do not include YouTube URLs, they will be added later.
+              IMPORTANT: Do not include any URLs in the response. The URLs will be added later by the application.
               IMPORTANT: Generate exactly ${questionCount} questions.
               IMPORTANT: Return only the JSON, without backticks or code markers.`,
               },
               {
                 role: 'user',
-                content: `Theme: ${prompt}\nAnswer type: ${answerType}`,
+                content: `Theme: ${prompt}\nAnswer type: ${answerType}\nDifficulty: ${difficulty}`,
               },
             ],
             temperature: 0.7,

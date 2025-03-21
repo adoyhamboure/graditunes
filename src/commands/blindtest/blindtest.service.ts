@@ -13,7 +13,7 @@ import {
   TextInputStyle,
   ModalSubmitInteraction,
 } from 'discord.js';
-import { Blindtest, BlindtestState } from './types';
+import { BlindtestState } from './types';
 import { StreamingService } from '../streaming/streaming.service';
 import { DeepseekService } from './deepseek.service';
 import { distance } from 'fastest-levenshtein';
@@ -98,6 +98,15 @@ export class BlindtestService implements OnModuleInit {
       .setPlaceholder('ex: nom du jeu, artiste, titre de la musique')
       .setMaxLength(50);
 
+    const difficultyInput = new TextInputBuilder()
+      .setCustomId('difficulty_input')
+      .setLabel('Difficulté')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setValue('moyen')
+      .setPlaceholder('facile, moyen, difficile, impossible')
+      .setMaxLength(10);
+
     const firstActionRow =
       new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput);
     const secondActionRow =
@@ -108,12 +117,15 @@ export class BlindtestService implements OnModuleInit {
       );
     const fourthActionRow =
       new ActionRowBuilder<TextInputBuilder>().addComponents(answerTypeInput);
+    const fifthActionRow =
+      new ActionRowBuilder<TextInputBuilder>().addComponents(difficultyInput);
 
     modal.addComponents(
       firstActionRow,
       secondActionRow,
       thirdActionRow,
       fourthActionRow,
+      fifthActionRow,
     );
 
     await interaction.showModal(modal);
@@ -142,6 +154,7 @@ export class BlindtestService implements OnModuleInit {
     );
     const answerType =
       interaction.fields.getTextInputValue('answer_type_input');
+    const difficulty = interaction.fields.getTextInputValue('difficulty_input');
 
     if (isNaN(duration) || duration < 10 || duration > 300) {
       await interaction.reply({
@@ -169,24 +182,67 @@ export class BlindtestService implements OnModuleInit {
 
     try {
       // Générer le blindtest avec Deepseek
+      if (interaction.channel?.isTextBased()) {
+        const textChannel = interaction.channel as TextChannel;
+        await textChannel.send("🤖 Génération des questions avec l'IA...");
+      }
       const blindtest = await this.deepseekService.generateBlindtest(
         prompt,
         questionCount,
         answerType,
+        difficulty,
       );
 
+      if (interaction.channel?.isTextBased()) {
+        const textChannel = interaction.channel as TextChannel;
+        await textChannel.send('🔍 Recherche des vidéos YouTube...');
+      }
+
       // Pour chaque question, chercher une URL YouTube correspondante
+      let foundVideos = 0;
       for (const question of blindtest.questions) {
         try {
           const searchQuery = `${question.meta.title} ${question.meta.composer}`;
+          this.logger.log(`Recherche YouTube pour: ${searchQuery}`);
+
           const videoUrl =
             await this.streamingService.searchAndGetVideoUrl(searchQuery);
+          if (!videoUrl) {
+            this.logger.warn(
+              `Aucune URL YouTube trouvée pour la question: ${searchQuery}`,
+            );
+            continue;
+          }
           question.url = videoUrl;
+          foundVideos++;
+          this.logger.log(`Vidéo trouvée pour: ${searchQuery}`);
         } catch (error) {
-          this.logger.error(`Error finding video URL for question: ${error}`);
-          // Si on ne trouve pas l'URL, on utilise une URL par défaut
-          question.url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+          this.logger.error(
+            `Erreur lors de la recherche de l'URL YouTube pour la question: ${error}`,
+          );
+          // On ne définit pas d'URL par défaut, on laisse le champ undefined
         }
+      }
+
+      // Vérifier si toutes les questions ont une URL
+      const questionsWithoutUrl = blindtest.questions.filter((q) => !q.url);
+      if (questionsWithoutUrl.length > 0) {
+        this.logger.warn(
+          `${questionsWithoutUrl.length} questions n'ont pas d'URL YouTube`,
+        );
+        if (interaction.channel?.isTextBased()) {
+          const textChannel = interaction.channel as TextChannel;
+          await textChannel.send(
+            `⚠️ ${questionsWithoutUrl.length} questions n'ont pas de vidéo associée`,
+          );
+        }
+      }
+
+      if (interaction.channel?.isTextBased()) {
+        const textChannel = interaction.channel as TextChannel;
+        await textChannel.send(
+          `✅ ${foundVideos} vidéos trouvées sur ${blindtest.questions.length} questions`,
+        );
       }
 
       state.blindtest = blindtest;
@@ -197,7 +253,7 @@ export class BlindtestService implements OnModuleInit {
       const embed = new EmbedBuilder()
         .setTitle('🎮 Blindtest Prêt !')
         .setDescription(
-          `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**\nType de réponse attendu: **${blindtest.answerType}**`,
+          `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**\nType de réponse attendu: **${blindtest.answerType}**\nDifficulté: **${difficulty}**\nVidéos trouvées: **${foundVideos}/${blindtest.questions.length}**`,
         )
         .setColor('#00ff00');
 
