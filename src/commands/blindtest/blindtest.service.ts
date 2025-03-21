@@ -640,4 +640,69 @@ export class BlindtestService implements OnModuleInit {
       });
     }
   }
+
+  @SlashCommand({
+    name: 'blindtest-stop',
+    description: 'Arrête le blindtest en cours et affiche les scores',
+  })
+  public async onBlindtestStop(
+    @Context() [interaction]: SlashCommandContext,
+  ): Promise<void> {
+    if (!interaction.guild) {
+      await interaction.reply({
+        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        flags: 64, // Ephemeral
+      });
+      return;
+    }
+
+    const state = this.getBlindtestState(interaction.guild.id);
+    if (!state.isActive || !state.blindtest) {
+      await interaction.reply({
+        content: "Aucun blindtest n'est en cours.",
+        flags: 64, // Ephemeral
+      });
+      return;
+    }
+
+    // Arrêter la musique
+    if (interaction.guildId) {
+      const player = this.streamingService.getPlayer(interaction.guildId);
+      if (player) {
+        player.stop();
+      }
+    }
+
+    // Nettoyer le timeout en cours
+    if (state.currentTimeout) {
+      clearTimeout(state.currentTimeout);
+      state.currentTimeout = undefined;
+    }
+
+    // Désactiver le blindtest
+    state.isActive = false;
+
+    const embed = new EmbedBuilder()
+      .setTitle('🏁 Blindtest Arrêté !')
+      .setDescription('Voici les scores finaux :')
+      .setColor('#ffd700');
+
+    const scores = Array.from(state.scores.entries()).sort(
+      (a, b) => b[1] - a[1],
+    );
+
+    if (scores.length === 0) {
+      embed.addFields({
+        name: 'Aucun point',
+        value: "Personne n'a marqué de points dans ce blindtest.",
+      });
+    } else {
+      for (const [userId, score] of scores) {
+        const user = await interaction.client.users.fetch(userId);
+        embed.addFields({ name: user.username, value: `${score} points` });
+      }
+    }
+
+    await interaction.reply({ embeds: [embed] });
+  }
 }
