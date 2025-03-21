@@ -37,6 +37,7 @@ export class BlindtestService implements OnModuleInit {
         scores: new Map(),
         blindtest: null,
         isQuestionSolved: false,
+        duration: 30, // Durée par défaut de 30 secondes
       });
     }
     return this.blindtestStates.get(guildId)!;
@@ -57,7 +58,51 @@ export class BlindtestService implements OnModuleInit {
       return;
     }
 
+    const modal = new ModalBuilder()
+      .setCustomId('blindtest_prepare_modal')
+      .setTitle('Configuration du Blindtest');
+
+    const durationInput = new TextInputBuilder()
+      .setCustomId('duration_input')
+      .setLabel('Durée par question (en secondes)')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setValue('30')
+      .setMaxLength(3);
+
+    const firstActionRow =
+      new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput);
+    modal.addComponents(firstActionRow);
+
+    await interaction.showModal(modal);
+  }
+
+  public async handleBlindtestPrepareModal(
+    interaction: ModalSubmitInteraction,
+  ): Promise<void> {
+    if (!interaction.guild) {
+      await interaction.reply({
+        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        flags: 64, // Ephemeral
+      });
+      return;
+    }
+
     const state = this.getBlindtestState(interaction.guild.id);
+    const duration = parseInt(
+      interaction.fields.getTextInputValue('duration_input'),
+      10,
+    );
+
+    if (isNaN(duration) || duration < 10 || duration > 300) {
+      await interaction.reply({
+        content: 'La durée doit être un nombre entre 10 et 300 secondes.',
+        flags: 64, // Ephemeral
+      });
+      return;
+    }
+
+    state.duration = duration;
 
     // Pour l'instant, on utilise un blindtest en dur
     const blindtest: Blindtest = {
@@ -98,7 +143,7 @@ export class BlindtestService implements OnModuleInit {
     const embed = new EmbedBuilder()
       .setTitle('🎮 Blindtest Prêt !')
       .setDescription(
-        `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**`,
+        `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**`,
       )
       .setColor('#00ff00');
 
@@ -332,7 +377,7 @@ export class BlindtestService implements OnModuleInit {
           void this.endBlindtest(interaction);
         }
       }
-    }, 20000);
+    }, state.duration * 1000); // Convertir les secondes en millisecondes
   }
 
   private async endBlindtest(

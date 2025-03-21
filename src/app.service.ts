@@ -27,6 +27,11 @@ export class AppService {
       interaction.customId === 'answer_modal'
     ) {
       await this.blindtestService.handleAnswerModal(interaction);
+    } else if (
+      interaction.isModalSubmit() &&
+      interaction.customId === 'blindtest_prepare_modal'
+    ) {
+      await this.blindtestService.handleBlindtestPrepareModal(interaction);
     }
   }
 }
