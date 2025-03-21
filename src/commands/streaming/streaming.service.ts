@@ -158,38 +158,41 @@ export class StreamingService implements OnModuleInit {
     ];
   }
 
-  private async createQueueItem(url: string): Promise<QueueItem> {
-    const tempFile = path.join(this.tempDir, `${Date.now()}.js`);
-    let retryCount = 0;
+  private async createQueueItem(
+    url: string,
+    retryCount = 0,
+  ): Promise<QueueItem> {
     const maxRetries = 3;
 
     while (retryCount < maxRetries) {
       try {
-        // Utiliser directement ytdl sans passer par l'API YouTube
         const stream = ytdl(url, {
           filter: 'audioonly',
           quality: 'highestaudio',
           highWaterMark: 1 << 25,
           agent: this.agent,
+          requestOptions: {
+            headers: {
+              Range: 'bytes=0-',
+            },
+          },
+          begin: 0,
+          liveBuffer: 10000,
+          dlChunkSize: 0,
+          range: {
+            start: 0,
+            end: 0,
+          },
         });
 
-        // Récupérer les informations de base sans utiliser l'API
         const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
-
-        // Nettoyer le fichier temporaire après utilisation
-        stream.on('end', () => {
-          try {
-            if (fs.existsSync(tempFile)) {
-              fs.unlinkSync(tempFile);
-            }
-          } catch (error) {
-            this.logger.error(`Error deleting temp file: ${error}`);
-          }
-        });
 
         const resource = createAudioResource(stream, {
           inputType: StreamType.Arbitrary,
           inlineVolume: true,
+          metadata: {
+            title: videoInfo.videoDetails.title,
+          },
         });
 
         if (resource.volume) {
@@ -217,6 +220,18 @@ export class StreamingService implements OnModuleInit {
               filter: 'audioonly',
               quality: 'highestaudio',
               highWaterMark: 1 << 25,
+              requestOptions: {
+                headers: {
+                  Range: 'bytes=0-',
+                },
+              },
+              begin: 0,
+              liveBuffer: 10000,
+              dlChunkSize: 0,
+              range: {
+                start: 0,
+                end: 0,
+              },
             });
 
             const videoInfo = await ytdl.getBasicInfo(url);
@@ -224,6 +239,9 @@ export class StreamingService implements OnModuleInit {
             const resource = createAudioResource(stream, {
               inputType: StreamType.Arbitrary,
               inlineVolume: true,
+              metadata: {
+                title: videoInfo.videoDetails.title,
+              },
             });
 
             if (resource.volume) {

@@ -637,7 +637,7 @@ export class BlindtestService implements OnModuleInit {
 
       // Ajouter le gestionnaire de bouton
       const collector = message.createMessageComponentCollector({
-        time: 20000,
+        time: state.duration * 1000, // Convertir les secondes en millisecondes
       });
 
       collector.on('collect', (i) => {
