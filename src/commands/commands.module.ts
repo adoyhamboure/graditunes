@@ -1,8 +1,9 @@
 import { Module } from '@nestjs/common';
-import { PingService } from './ping/ping.service';
 import { StreamingService } from './streaming/streaming.service';
+import { BlindtestService } from './blindtest/blindtest.service';
 
 @Module({
-  providers: [PingService, StreamingService],
+  providers: [StreamingService, BlindtestService],
+  exports: [StreamingService, BlindtestService],
 })
 export class CommandsModule {}

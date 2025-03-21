@@ -35,6 +35,9 @@ importers:
       discord.js:
         specifier: ^14.18.0
         version: 14.18.0
+      fastest-levenshtein:
+        specifier: ^1.0.16
+        version: 1.0.16
       ffmpeg-static:
         specifier: ^5.2.0
         version: 5.2.0
@@ -42,8 +45,8 @@ importers:
         specifier: ^0.7.15
         version: 0.7.15
       necord:
-        specifier: ^6.8.7
-        version: 6.8.7(@nestjs/common@11.0.10(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.0.10)(discord-api-types@0.37.119)(discord.js@14.18.0)(reflect-metadata@0.2.2)(rxjs@7.8.2)
+        specifier: ^6.8.8
+        version: 6.8.8(@nestjs/common@11.0.10(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.0.10)(discord-api-types@0.37.119)(discord.js@14.18.0)(reflect-metadata@0.2.2)(rxjs@7.8.2)
       reflect-metadata:
         specifier: ^0.2.2
         version: 0.2.2
@@ -1997,6 +2000,10 @@ packages:
   fast-uri@3.0.6:
     resolution: {integrity: sha512-Atfo14OibSv5wAp4VWNsFYE1AchQRTv9cBGWET4pZWHzYshFSS9NQI6I57rdKn9croWVMbYFbLhJ+yJvmZIIHw==}
 
+  fastest-levenshtein@1.0.16:
+    resolution: {integrity: sha512-eRnCtTTtGZFpQCwhJiUOuxPQWRXVKYDn0b2PeHfXL6/Zi53SLAzAHfVhVWK2AryC/WH05kGfxhFIPvTF0SXQzg==}
+    engines: {node: '>= 4.9.1'}
+
   fastq@1.19.0:
     resolution: {integrity: sha512-7SFSRCNjBQIZH/xZR3iy5iQYR8aGBE0h3VG6/cwlbrpdciNYBMotQav8c1XI3HjHH+NikUpP53nPdlZSdWmFzA==}
 
@@ -2807,8 +2814,8 @@ packages:
   natural-compare@1.4.0:
     resolution: {integrity: sha512-OWND8ei3VtNC9h7V60qff3SVobHr996CTwgxubgyQYEpg290h9J0buyECNNJexkFm5sOajh5G116RYA1c8ZMSw==}
 
-  necord@6.8.7:
-    resolution: {integrity: sha512-aYfXtQXnEwZiXPshHcpKc/fX12QNJX1jNz3+ji3ekXz21N2Fj9fXYOrb5RgE+Yy6nwRAh1YAiCF4QMwkHFpCXw==}
+  necord@6.8.8:
+    resolution: {integrity: sha512-IDJ/wedWZlc6ksXmLSAHx1F5V6jXtbJzpyQ1makTVgZ/OzC93ik7Y6tpXmqpIuIWH+jBdPLRDPAbh3QQFhvMMQ==}
     engines: {node: '>=18', npm: '>=8.6.0'}
     peerDependencies:
       '@nestjs/common': ^10.2.0 || ^11.0.0
@@ -5899,6 +5906,8 @@ snapshots:
 
   fast-uri@3.0.6: {}
 
+  fastest-levenshtein@1.0.16: {}
+
   fastq@1.19.0:
     dependencies:
       reusify: 1.0.4
@@ -6859,7 +6868,7 @@ snapshots:
 
   natural-compare@1.4.0: {}
 
-  necord@6.8.7(@nestjs/common@11.0.10(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.0.10)(discord-api-types@0.37.119)(discord.js@14.18.0)(reflect-metadata@0.2.2)(rxjs@7.8.2):
+  necord@6.8.8(@nestjs/common@11.0.10(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/core@11.0.10)(discord-api-types@0.37.119)(discord.js@14.18.0)(reflect-metadata@0.2.2)(rxjs@7.8.2):
     dependencies:
       '@nestjs/common': 11.0.10(reflect-metadata@0.2.2)(rxjs@7.8.2)
       '@nestjs/core': 11.0.10(@nestjs/common@11.0.10(reflect-metadata@0.2.2)(rxjs@7.8.2))(@nestjs/platform-express@11.0.10)(reflect-metadata@0.2.2)(rxjs@7.8.2)
