@@ -152,51 +152,17 @@ export class StreamingService implements OnModuleInit {
 
   private async createQueueItem(url: string): Promise<QueueItem> {
     const tempFile = path.join(this.tempDir, `${Date.now()}.js`);
-    try {
-      const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
-      const stream = ytdl(url, {
-        filter: 'audioonly',
-        quality: 'highestaudio',
-        highWaterMark: 1 << 25,
-        agent: this.agent,
-      });
+    let retryCount = 0;
+    const maxRetries = 3;
 
-      // Nettoyer le fichier temporaire après utilisation
-      stream.on('end', () => {
-        try {
-          if (fs.existsSync(tempFile)) {
-            fs.unlinkSync(tempFile);
-          }
-        } catch (error) {
-          this.logger.error(`Error deleting temp file: ${error}`);
-        }
-      });
-
-      const resource = createAudioResource(stream, {
-        inputType: StreamType.Arbitrary,
-        inlineVolume: true,
-      });
-
-      if (resource.volume) {
-        resource.volume.setVolume(0.5);
-      }
-
-      return {
-        title: videoInfo.videoDetails.title,
-        url,
-        resource,
-      };
-    } catch (error) {
-      // Si l'erreur est 403, essayer sans les cookies
-      if (
-        error instanceof Error &&
-        error.message.includes('Status code: 403')
-      ) {
-        const videoInfo = await ytdl.getBasicInfo(url);
+    while (retryCount < maxRetries) {
+      try {
+        const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
         const stream = ytdl(url, {
           filter: 'audioonly',
           quality: 'highestaudio',
           highWaterMark: 1 << 25,
+          agent: this.agent,
         });
 
         // Nettoyer le fichier temporaire après utilisation
@@ -224,9 +190,60 @@ export class StreamingService implements OnModuleInit {
           url,
           resource,
         };
+      } catch (error) {
+        retryCount++;
+
+        // Si c'est une erreur 403, essayer sans les cookies
+        if (
+          error instanceof Error &&
+          error.message.includes('Status code: 403')
+        ) {
+          this.logger.warn(
+            `Erreur 403 détectée, tentative ${retryCount}/${maxRetries} sans cookies`,
+          );
+          try {
+            const videoInfo = await ytdl.getBasicInfo(url);
+            const stream = ytdl(url, {
+              filter: 'audioonly',
+              quality: 'highestaudio',
+              highWaterMark: 1 << 25,
+            });
+
+            const resource = createAudioResource(stream, {
+              inputType: StreamType.Arbitrary,
+              inlineVolume: true,
+            });
+
+            if (resource.volume) {
+              resource.volume.setVolume(0.5);
+            }
+
+            return {
+              title: videoInfo.videoDetails.title,
+              url,
+              resource,
+            };
+          } catch (retryError) {
+            this.logger.error(
+              `Erreur lors de la tentative sans cookies: ${retryError}`,
+            );
+          }
+        }
+
+        // Si c'est la dernière tentative, lancer l'erreur
+        if (retryCount === maxRetries) {
+          this.logger.error(`Échec après ${maxRetries} tentatives: ${error}`);
+          throw new Error(
+            `Impossible de lire la vidéo après ${maxRetries} tentatives: ${error instanceof Error ? error.message : 'Erreur inconnue'}`,
+          );
+        }
+
+        // Attendre un peu avant de réessayer
+        await new Promise((resolve) => setTimeout(resolve, 1000 * retryCount));
       }
-      throw error;
     }
+
+    throw new Error("Impossible de créer l'élément de la file d'attente");
   }
 
   private async handlePlaylist(

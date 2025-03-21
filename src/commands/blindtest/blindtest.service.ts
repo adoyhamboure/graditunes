@@ -149,12 +149,44 @@ export class BlindtestService implements OnModuleInit {
       const member = interaction.member as GuildMember;
       const voiceChannel = member.voice.channel;
       if (voiceChannel) {
-        void this.streamingService.playMusic(
-          interaction.guildId,
-          voiceChannel.id,
-          currentQuestion.url,
-          { voiceAdapterCreator: interaction.guild.voiceAdapterCreator },
-        );
+        try {
+          await this.streamingService.playMusic(
+            interaction.guildId,
+            voiceChannel.id,
+            currentQuestion.url,
+            { voiceAdapterCreator: interaction.guild.voiceAdapterCreator },
+          );
+        } catch (error) {
+          this.logger.error(
+            `Erreur lors de la lecture de la musique: ${error}`,
+          );
+
+          // Envoyer un message d'erreur dans le canal de texte
+          if (interaction.channel?.isTextBased()) {
+            const textChannel = interaction.channel as TextChannel;
+            const errorEmbed = new EmbedBuilder()
+              .setTitle('❌ Erreur de lecture')
+              .setDescription(
+                'Une erreur est survenue lors de la lecture de la musique. Passage à la question suivante...',
+              )
+              .setColor('#ff0000');
+
+            await textChannel.send({ embeds: [errorEmbed] });
+          }
+
+          // Passer à la question suivante
+          state.currentQuestionIndex++;
+          if (state.currentQuestionIndex < state.blindtest!.questions.length) {
+            if (interaction.channel?.isTextBased()) {
+              const textChannel = interaction.channel as TextChannel;
+              await textChannel.send('🎵 Question suivante...');
+            }
+            await this.playCurrentQuestion(interaction);
+          } else {
+            await this.endBlindtest(interaction);
+          }
+          return;
+        }
       }
     }
 
