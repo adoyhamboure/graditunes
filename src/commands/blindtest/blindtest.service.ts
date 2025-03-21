@@ -15,6 +15,7 @@ import {
 } from 'discord.js';
 import { Blindtest, BlindtestState } from './types';
 import { StreamingService } from '../streaming/streaming.service';
+import { DeepseekService } from './deepseek.service';
 import { distance } from 'fastest-levenshtein';
 import { AnswerDto } from './answer.dto';
 
@@ -23,7 +24,10 @@ export class BlindtestService implements OnModuleInit {
   private readonly logger = new Logger(BlindtestService.name);
   private blindtestStates = new Map<string, BlindtestState>();
 
-  constructor(private readonly streamingService: StreamingService) {}
+  constructor(
+    private readonly streamingService: StreamingService,
+    private readonly deepseekService: DeepseekService,
+  ) {}
 
   public onModuleInit() {
     this.logger.log('BlindtestService has been initialized!');
@@ -70,9 +74,47 @@ export class BlindtestService implements OnModuleInit {
       .setValue('30')
       .setMaxLength(3);
 
+    const promptInput = new TextInputBuilder()
+      .setCustomId('prompt_input')
+      .setLabel('Thème du blindtest')
+      .setPlaceholder('ex: musique de jeux vidéo')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setMaxLength(100);
+
+    const questionCountInput = new TextInputBuilder()
+      .setCustomId('question_count_input')
+      .setLabel('Nombre de questions')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setValue('10')
+      .setMaxLength(2);
+
+    const answerTypeInput = new TextInputBuilder()
+      .setCustomId('answer_type_input')
+      .setLabel('Type de réponse attendu')
+      .setStyle(TextInputStyle.Short)
+      .setRequired(true)
+      .setPlaceholder('ex: nom du jeu, artiste, titre de la musique')
+      .setMaxLength(50);
+
     const firstActionRow =
       new ActionRowBuilder<TextInputBuilder>().addComponents(durationInput);
-    modal.addComponents(firstActionRow);
+    const secondActionRow =
+      new ActionRowBuilder<TextInputBuilder>().addComponents(promptInput);
+    const thirdActionRow =
+      new ActionRowBuilder<TextInputBuilder>().addComponents(
+        questionCountInput,
+      );
+    const fourthActionRow =
+      new ActionRowBuilder<TextInputBuilder>().addComponents(answerTypeInput);
+
+    modal.addComponents(
+      firstActionRow,
+      secondActionRow,
+      thirdActionRow,
+      fourthActionRow,
+    );
 
     await interaction.showModal(modal);
   }
@@ -93,6 +135,13 @@ export class BlindtestService implements OnModuleInit {
       interaction.fields.getTextInputValue('duration_input'),
       10,
     );
+    const prompt = interaction.fields.getTextInputValue('prompt_input');
+    const questionCount = parseInt(
+      interaction.fields.getTextInputValue('question_count_input'),
+      10,
+    );
+    const answerType =
+      interaction.fields.getTextInputValue('answer_type_input');
 
     if (isNaN(duration) || duration < 10 || duration > 300) {
       await interaction.reply({
@@ -102,52 +151,72 @@ export class BlindtestService implements OnModuleInit {
       return;
     }
 
+    if (isNaN(questionCount) || questionCount < 1 || questionCount > 50) {
+      await interaction.reply({
+        content: 'Le nombre de questions doit être entre 1 et 50.',
+        flags: 64, // Ephemeral
+      });
+      return;
+    }
+
     state.duration = duration;
 
-    // Pour l'instant, on utilise un blindtest en dur
-    const blindtest: Blindtest = {
-      theme: 'Video Game Soundtracks',
-      questions: [
-        {
-          url: 'https://www.youtube.com/watch?v=aQ6Fq-LfDZQ&list=RDaQ6Fq-LfDZQ&start_radio=1',
-          acceptable_answers: [
-            'The Legend of Zelda: Ocarina of Time',
-            'Zelda: Ocarina of Time',
-            'Ocarina of Time',
-          ],
-          meta: {
-            type: 'video game',
-            source: 'The Legend of Zelda: Ocarina of Time',
-            title: 'Gerudo Valley',
-            composer: 'Koji Kondo',
-          },
-        },
-        {
-          url: 'https://www.youtube.com/watch?v=wDgQdr8ZkTw&list=RDwDgQdr8ZkTw&start_radio=1',
-          acceptable_answers: ['Undertale'],
-          meta: {
-            type: 'video game',
-            source: 'Undertale',
-            title: 'Megalovania',
-            composer: 'Toby Fox',
-          },
-        },
-      ],
-    };
+    // Répondre immédiatement avec un message de chargement
+    await interaction.reply({
+      content: '🎵 Génération du blindtest en cours...',
+      flags: 64, // Ephemeral
+    });
 
-    state.blindtest = blindtest;
-    state.isActive = false;
-    state.currentQuestionIndex = 0;
-    state.scores.clear();
+    try {
+      // Générer le blindtest avec Deepseek
+      const blindtest = await this.deepseekService.generateBlindtest(
+        prompt,
+        questionCount,
+        answerType,
+      );
 
-    const embed = new EmbedBuilder()
-      .setTitle('🎮 Blindtest Prêt !')
-      .setDescription(
-        `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**`,
-      )
-      .setColor('#00ff00');
+      // Pour chaque question, chercher une URL YouTube correspondante
+      for (const question of blindtest.questions) {
+        try {
+          const searchQuery = `${question.meta.title} ${question.meta.composer}`;
+          const videoUrl =
+            await this.streamingService.searchAndGetVideoUrl(searchQuery);
+          question.url = videoUrl;
+        } catch (error) {
+          this.logger.error(`Error finding video URL for question: ${error}`);
+          // Si on ne trouve pas l'URL, on utilise une URL par défaut
+          question.url = 'https://www.youtube.com/watch?v=dQw4w9WgXcQ';
+        }
+      }
 
-    await interaction.reply({ embeds: [embed] });
+      state.blindtest = blindtest;
+      state.isActive = false;
+      state.currentQuestionIndex = 0;
+      state.scores.clear();
+
+      const embed = new EmbedBuilder()
+        .setTitle('🎮 Blindtest Prêt !')
+        .setDescription(
+          `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**\nType de réponse attendu: **${blindtest.answerType}**`,
+        )
+        .setColor('#00ff00');
+
+      // Envoyer le message final dans le canal
+      if (interaction.channel?.isTextBased()) {
+        const textChannel = interaction.channel as TextChannel;
+        await textChannel.send({ embeds: [embed] });
+      }
+    } catch (error) {
+      this.logger.error(`Error preparing blindtest: ${error}`);
+      // Envoyer le message d'erreur dans le canal
+      if (interaction.channel?.isTextBased()) {
+        const textChannel = interaction.channel as TextChannel;
+        await textChannel.send({
+          content:
+            'Une erreur est survenue lors de la préparation du blindtest. Veuillez réessayer.',
+        });
+      }
+    }
   }
 
   @SlashCommand({
@@ -196,6 +265,11 @@ export class BlindtestService implements OnModuleInit {
     const state = this.getBlindtestState(interaction.guild.id);
     state.isQuestionSolved = false; // Réinitialiser l'état pour la nouvelle question
 
+    // Vérifier si le blindtest est toujours actif
+    if (!state.isActive) {
+      return;
+    }
+
     // Nettoyer le timeout précédent s'il existe
     if (state.currentTimeout) {
       clearTimeout(state.currentTimeout);
@@ -235,6 +309,9 @@ export class BlindtestService implements OnModuleInit {
       const voiceChannel = member.voice.channel;
       if (voiceChannel) {
         try {
+          if (!currentQuestion.url) {
+            throw new Error('URL de la musique non définie');
+          }
           await this.streamingService.playMusic(
             interaction.guildId,
             voiceChannel.id,
@@ -292,7 +369,7 @@ export class BlindtestService implements OnModuleInit {
       const questionEmbed = new EmbedBuilder()
         .setTitle('🎵 Question en cours')
         .setDescription(
-          `Question ${state.currentQuestionIndex + 1}/${state.blindtest!.questions.length}\nCliquez sur le bouton ci-dessous pour répondre !`,
+          `Question ${state.currentQuestionIndex + 1}/${state.blindtest!.questions.length}\nType de réponse attendu: **${state.blindtest!.answerType}**\nCliquez sur le bouton ci-dessous pour répondre !`,
         )
         .setColor('#0099ff');
 
@@ -339,17 +416,21 @@ export class BlindtestService implements OnModuleInit {
     // Attendre 20 secondes avant de passer à la question suivante
     state.currentTimeout = setTimeout(() => {
       if (state.isActive) {
-        const correctAnswer = currentQuestion.meta.source;
         const embed = new EmbedBuilder()
           .setTitle('⏰ Temps écoulé !')
           .setDescription(
-            `La réponse était : **${correctAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
+            `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
           )
           .setColor('#ff0000');
 
         if (interaction.channel?.isTextBased()) {
           const textChannel = interaction.channel as TextChannel;
           void textChannel.send({ embeds: [embed] });
+        }
+
+        // Vérifier si le blindtest est toujours actif avant de continuer
+        if (!state.isActive) {
+          return;
         }
 
         // Passer à la question suivante
@@ -362,6 +443,10 @@ export class BlindtestService implements OnModuleInit {
 
             // Attendre 5 secondes
             setTimeout(() => {
+              // Vérifier si le blindtest est toujours actif avant de continuer
+              if (!state.isActive) {
+                return;
+              }
               void textChannel.send('🎵 Question suivante...');
               void this.playCurrentQuestion(interaction);
             }, 5000);
@@ -497,7 +582,7 @@ export class BlindtestService implements OnModuleInit {
     const embed = new EmbedBuilder()
       .setTitle('🎉 Tous les joueurs ont trouvé la réponse !')
       .setDescription(
-        `La réponse était : **${currentQuestion.meta.source}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
+        `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
       )
       .setColor('#00ff00');
 
@@ -505,6 +590,11 @@ export class BlindtestService implements OnModuleInit {
 
     // Attendre 5 secondes
     await new Promise((resolve) => setTimeout(resolve, 5000));
+
+    // Vérifier si le blindtest est toujours actif avant de continuer
+    if (!state.isActive) {
+      return;
+    }
 
     // Passer à la question suivante ou terminer le blindtest
     state.currentQuestionIndex++;

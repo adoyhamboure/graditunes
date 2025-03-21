@@ -11,7 +11,18 @@ export interface BlindtestQuestion {
 
 export interface Blindtest {
   theme: string;
-  questions: BlindtestQuestion[];
+  answerType: string;
+  questions: Array<{
+    meta: {
+      type: string;
+      source: string;
+      title: string;
+      composer: string;
+    };
+    url?: string;
+    acceptable_answers: string[];
+    displayableAnswer: string;
+  }>;
 }
 
 export interface BlindtestState {

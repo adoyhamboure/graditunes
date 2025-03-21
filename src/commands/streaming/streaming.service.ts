@@ -53,6 +53,14 @@ interface YouTubePlaylistItemsResponse {
   nextPageToken?: string;
 }
 
+interface YouTubeSearchResponse {
+  items: Array<{
+    id: {
+      videoId: string;
+    };
+  }>;
+}
+
 @Injectable()
 export class StreamingService implements OnModuleInit {
   private readonly logger = new Logger(StreamingService.name);
@@ -767,6 +775,40 @@ export class StreamingService implements OnModuleInit {
       await interaction.reply(
         `Une erreur est survenue: ${error instanceof Error ? error.message : 'Unknown error'}`,
       );
+    }
+  }
+
+  public async searchAndGetVideoUrl(searchQuery: string): Promise<string> {
+    try {
+      const apiKey = this.configService.get<string>('YOUTUBE_API_KEY');
+      if (!apiKey) {
+        throw new Error(
+          'YOUTUBE_API_KEY is not defined in environment variables',
+        );
+      }
+
+      const response = await axios.get<YouTubeSearchResponse>(
+        `https://www.googleapis.com/youtube/v3/search`,
+        {
+          params: {
+            part: 'snippet',
+            q: searchQuery,
+            type: 'video',
+            maxResults: 1,
+            key: apiKey,
+          },
+        },
+      );
+
+      if (response.data.items && response.data.items.length > 0) {
+        const videoId = response.data.items[0].id.videoId;
+        return `https://www.youtube.com/watch?v=${videoId}`;
+      }
+
+      throw new Error('Aucune vidéo trouvée');
+    } catch (error) {
+      this.logger.error(`Error searching for video: ${error}`);
+      throw error;
     }
   }
 }
