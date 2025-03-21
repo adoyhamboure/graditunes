@@ -328,6 +328,7 @@ export class StreamingService implements OnModuleInit {
             // Vérifier d'abord si la vidéo est disponible
             try {
               await ytdl.getBasicInfo(videoUrl, { agent: this.agent });
+              // eslint-disable-next-line @typescript-eslint/no-unused-vars
             } catch (error) {
               this.logger.warn(
                 `Vidéo indisponible ou supprimée: ${video.snippet.title}`,
