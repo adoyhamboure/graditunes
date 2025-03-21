@@ -3,7 +3,7 @@ import { ConfigService } from '@nestjs/config';
 import { Blindtest } from './types';
 import { BLINDTEST_SYSTEM_PROMPT } from './prompts';
 
-interface DeepseekResponse {
+interface GPTResponse {
   choices: Array<{
     message: {
       content: string;
@@ -12,16 +12,14 @@ interface DeepseekResponse {
 }
 
 @Injectable()
-export class DeepseekService {
-  private readonly logger = new Logger(DeepseekService.name);
+export class GPTService {
+  private readonly logger = new Logger(GPTService.name);
   private readonly apiKey: string;
 
   constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>('DEEPSEEK_API_KEY');
+    const apiKey = this.configService.get<string>('OPENAI_API_KEY');
     if (!apiKey) {
-      throw new Error(
-        'DEEPSEEK_API_KEY is not defined in environment variables',
-      );
+      throw new Error('OPENAI_API_KEY is not defined in environment variables');
     }
     this.apiKey = apiKey;
   }
@@ -40,7 +38,7 @@ export class DeepseekService {
 
     try {
       const response = await fetch(
-        'https://api.deepseek.com/v1/chat/completions',
+        'https://api.openai.com/v1/chat/completions',
         {
           method: 'POST',
           headers: {
@@ -48,7 +46,7 @@ export class DeepseekService {
             Authorization: `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: 'deepseek-chat',
+            model: 'gpt-4o-mini',
             messages: [
               {
                 role: 'system',
@@ -68,24 +66,24 @@ export class DeepseekService {
       if (!response.ok) {
         const errorText = await response.text();
         this.logger.error(
-          `Deepseek API error: ${response.status} ${response.statusText}`,
+          `OpenAI API error: ${response.status} ${response.statusText}`,
         );
         this.logger.error(`Response body: ${errorText}`);
         throw new Error(
-          `Deepseek API error: ${response.status} ${response.statusText}`,
+          `OpenAI API error: ${response.status} ${response.statusText}`,
         );
       }
 
-      const data = (await response.json()) as DeepseekResponse;
+      const data = (await response.json()) as GPTResponse;
       this.logger.log(
-        `Raw response from Deepseek: ${JSON.stringify(data, null, 2)}`,
+        `Raw response from OpenAI: ${JSON.stringify(data, null, 2)}`,
       );
 
       const content = data.choices[0].message.content;
-      this.logger.log(`Deepseek response: ${content}`);
+      this.logger.log(`OpenAI response: ${content}`);
 
       if (!content) {
-        throw new Error('No content in Deepseek response');
+        throw new Error('No content in OpenAI response');
       }
 
       // Nettoyer le contenu des marqueurs de code Markdown
@@ -107,7 +105,7 @@ export class DeepseekService {
           parseError instanceof Error ? parseError.message : String(parseError);
         this.logger.error(`Error parsing JSON: ${errorMessage}`);
         this.logger.error(`Content that failed to parse: ${cleanContent}`);
-        throw new Error(`Invalid JSON response from Deepseek: ${errorMessage}`);
+        throw new Error(`Invalid JSON response from OpenAI: ${errorMessage}`);
       }
     } catch (error) {
       this.logger.error(`Error generating blindtest: ${error}`);

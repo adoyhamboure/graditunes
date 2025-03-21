@@ -35,6 +35,7 @@ export interface BlindtestState {
   currentTimeout?: NodeJS.Timeout;
   duration: number;
   difficulty: string;
+  aiProvider: 'deepseek' | 'gpt';
 }
 
 export interface Question {

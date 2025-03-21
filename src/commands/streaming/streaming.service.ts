@@ -165,13 +165,16 @@ export class StreamingService implements OnModuleInit {
 
     while (retryCount < maxRetries) {
       try {
-        const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
+        // Utiliser directement ytdl sans passer par l'API YouTube
         const stream = ytdl(url, {
           filter: 'audioonly',
           quality: 'highestaudio',
           highWaterMark: 1 << 25,
           agent: this.agent,
         });
+
+        // Récupérer les informations de base sans utiliser l'API
+        const videoInfo = await ytdl.getBasicInfo(url, { agent: this.agent });
 
         // Nettoyer le fichier temporaire après utilisation
         stream.on('end', () => {
@@ -210,12 +213,13 @@ export class StreamingService implements OnModuleInit {
             `Erreur 403 détectée, tentative ${retryCount}/${maxRetries} sans cookies`,
           );
           try {
-            const videoInfo = await ytdl.getBasicInfo(url);
             const stream = ytdl(url, {
               filter: 'audioonly',
               quality: 'highestaudio',
               highWaterMark: 1 << 25,
             });
+
+            const videoInfo = await ytdl.getBasicInfo(url);
 
             const resource = createAudioResource(stream, {
               inputType: StreamType.Arbitrary,
@@ -273,6 +277,7 @@ export class StreamingService implements OnModuleInit {
       let nextPageToken: string | undefined;
       let totalVideos = 0;
       let processedVideos = 0;
+      let skippedVideos = 0;
 
       // Première requête pour obtenir le nombre total de vidéos
       const initialResponse = await axios.get<YouTubePlaylistResponse>(
@@ -319,6 +324,19 @@ export class StreamingService implements OnModuleInit {
           try {
             const videoId = video.snippet.resourceId.videoId;
             const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
+
+            // Vérifier d'abord si la vidéo est disponible
+            try {
+              await ytdl.getBasicInfo(videoUrl, { agent: this.agent });
+            } catch (error) {
+              this.logger.warn(
+                `Vidéo indisponible ou supprimée: ${video.snippet.title}`,
+              );
+              skippedVideos++;
+              processedVideos++;
+              continue;
+            }
+
             const videoInfo = await ytdl.getBasicInfo(videoUrl, {
               agent: this.agent,
             });
@@ -351,13 +369,14 @@ export class StreamingService implements OnModuleInit {
                 (processedVideos / totalVideos) * 100,
               );
               await interaction.editReply(
-                `🎵 Chargement de la playlist... (${processedVideos}/${totalVideos} vidéos) - ${progress}%`,
+                `🎵 Chargement de la playlist... (${processedVideos}/${totalVideos} vidéos) - ${progress}%\n${skippedVideos > 0 ? `⚠️ ${skippedVideos} vidéo(s) ignorée(s) car indisponible(s)` : ''}`,
               );
             }
           } catch (error) {
-            this.logger.error(
-              `Error processing video ${video.snippet.title}: ${error}`,
+            this.logger.warn(
+              `Vidéo ignorée: ${video.snippet.title} - ${error instanceof Error ? error.message : 'Erreur inconnue'}`,
             );
+            skippedVideos++;
             processedVideos++;
           }
         }
@@ -366,8 +385,13 @@ export class StreamingService implements OnModuleInit {
       } while (nextPageToken);
 
       if (items.length === 0) {
-        throw new Error('No videos found in playlist');
+        throw new Error('Aucune vidéo disponible dans la playlist');
       }
+
+      // Message final avec le résumé
+      await interaction.editReply(
+        `✅ Chargement terminé !\n${items.length} vidéo(s) chargée(s)\n${skippedVideos > 0 ? `⚠️ ${skippedVideos} vidéo(s) ignorée(s) car indisponible(s)` : ''}`,
+      );
 
       return items;
     } catch (error) {
@@ -572,7 +596,38 @@ export class StreamingService implements OnModuleInit {
           );
           return;
         }
-        // Handle playlist...
+
+        // Initialiser ou obtenir la file d'attente
+        let queue = this.queues.get(interaction.guildId || '');
+        if (!queue) {
+          queue = {
+            items: [],
+            currentIndex: 0,
+          };
+          this.queues.set(interaction.guildId || '', queue);
+        }
+
+        // Ajouter les vidéos de la playlist à la file d'attente existante
+        const currentItems = queue.items;
+        queue.items = [...currentItems, ...items];
+
+        // Si aucune musique n'est en cours de lecture, démarrer la première
+        const player = this.players.get(interaction.guildId || '');
+        if (!player || player.state.status === AudioPlayerStatus.Idle) {
+          if (!interaction.guildId) {
+            throw new Error('Guild ID is required');
+          }
+          await this.playMusic(
+            interaction.guildId,
+            voiceChannel.id,
+            items[0].url,
+            interaction.guild,
+          );
+        }
+
+        await interaction.editReply(
+          `✅ ${items.length} vidéo(s) ajoutée(s) à la file d'attente !\nUtilisez \`/queue\` pour voir la file d'attente complète.`,
+        );
       } else {
         if (!interaction.guildId) {
           throw new Error('Guild ID is required');
@@ -787,6 +842,9 @@ export class StreamingService implements OnModuleInit {
         );
       }
 
+      // Ajouter un délai entre les requêtes pour éviter de surcharger l'API
+      await new Promise((resolve) => setTimeout(resolve, 1000));
+
       const response = await axios.get<YouTubeSearchResponse>(
         `https://www.googleapis.com/youtube/v3/search`,
         {
@@ -796,6 +854,9 @@ export class StreamingService implements OnModuleInit {
             type: 'video',
             maxResults: 1,
             key: apiKey,
+            regionCode: 'FR', // Limiter les résultats à la France
+            videoEmbeddable: 'true', // Uniquement les vidéos qui peuvent être intégrées
+            videoDuration: 'short,medium', // Uniquement les vidéos courtes et moyennes
           },
         },
       );
