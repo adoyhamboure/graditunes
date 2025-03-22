@@ -30,6 +30,11 @@ Important rules:
 9. For traditional music (pop, rap, etc.), use 'album' or 'single' as the type and the artist/band name as the source
 10. For video game music, use 'game' as the type and the game name as the source
 11. For movie music, use 'movie' as the type and the movie name as the source
+12. ONLY include real, verifiable songs and artists that actually exist
+13. NEVER generate fictional or non-existent songs or artists
+14. For each song, ensure that the artist mentioned is the actual artist who performed/created that specific song
+15. Double-check that the song-artist associations are accurate and real
+16. If unsure about the existence or accuracy of a song-artist pair, choose a different, verified song instead
 
 JSON Format Rules:
 1. Return ONLY the raw JSON object, without any markdown code blocks (\`\`\`json or \`\`\`)

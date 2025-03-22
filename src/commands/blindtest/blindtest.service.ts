@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { Context, Options, SlashCommand, SlashCommandContext } from 'necord';
 import {
   EmbedBuilder,
@@ -27,6 +33,7 @@ export class BlindtestService implements OnModuleInit {
   private blindtestStates = new Map<string, BlindtestState>();
 
   constructor(
+    @Inject(forwardRef(() => StreamingService))
     private readonly streamingService: StreamingService,
     private readonly deepseekService: DeepseekService,
     private readonly gptService: GPTService,
@@ -36,7 +43,7 @@ export class BlindtestService implements OnModuleInit {
     this.logger.log('BlindtestService has been initialized!');
   }
 
-  private getBlindtestState(guildId: string): BlindtestState {
+  public getBlindtestState(guildId: string): BlindtestState {
     if (!this.blindtestStates.has(guildId)) {
       this.blindtestStates.set(guildId, {
         isActive: false,
@@ -522,6 +529,16 @@ export class BlindtestService implements OnModuleInit {
       state.currentTimeout = undefined;
     }
 
+    // Arrêter la musique en cours avant de jouer la nouvelle question
+    if (interaction.guildId) {
+      const player = this.streamingService.getPlayer(interaction.guildId);
+      if (player) {
+        player.stop();
+        // Attendre un court instant pour s'assurer que la musique est bien arrêtée
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+
     const currentQuestion =
       state.blindtest!.questions[state.currentQuestionIndex];
 
@@ -670,8 +687,18 @@ export class BlindtestService implements OnModuleInit {
     }
 
     // Attendre 20 secondes avant de passer à la question suivante
-    state.currentTimeout = setTimeout(() => {
+    state.currentTimeout = setTimeout(async () => {
       if (state.isActive) {
+        // Arrêter la musique en cours
+        if (interaction.guildId) {
+          const player = this.streamingService.getPlayer(interaction.guildId);
+          if (player) {
+            player.stop();
+            // Attendre un court instant pour s'assurer que la musique est bien arrêtée
+            await new Promise((resolve) => setTimeout(resolve, 1000));
+          }
+        }
+
         const embed = new EmbedBuilder()
           .setTitle('⏰ Temps écoulé !')
           .setDescription(
@@ -681,7 +708,7 @@ export class BlindtestService implements OnModuleInit {
 
         if (interaction.channel?.isTextBased()) {
           const textChannel = interaction.channel as TextChannel;
-          void textChannel.send({ embeds: [embed] });
+          await textChannel.send({ embeds: [embed] });
         }
 
         // Vérifier si le blindtest est toujours actif avant de continuer
@@ -695,7 +722,7 @@ export class BlindtestService implements OnModuleInit {
           // Utiliser le canal de texte pour envoyer un message
           if (interaction.channel?.isTextBased()) {
             const textChannel = interaction.channel as TextChannel;
-            void textChannel.send('🎵 Question suivante dans 5 secondes...');
+            await textChannel.send('🎵 Question suivante dans 5 secondes...');
 
             // Attendre 5 secondes
             setTimeout(() => {
@@ -708,13 +735,6 @@ export class BlindtestService implements OnModuleInit {
             }, 5000);
           }
         } else {
-          // Arrêter la musique avant de terminer le blindtest
-          if (interaction.guildId) {
-            const player = this.streamingService.getPlayer(interaction.guildId);
-            if (player) {
-              player.stop();
-            }
-          }
           void this.endBlindtest(interaction);
         }
       }

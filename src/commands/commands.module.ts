@@ -7,7 +7,18 @@ import { GPTService } from './blindtest/gpt.service';
 
 @Module({
   imports: [ConfigModule],
-  providers: [StreamingService, BlindtestService, DeepseekService, GPTService],
+  providers: [
+    {
+      provide: StreamingService,
+      useClass: StreamingService,
+    },
+    {
+      provide: BlindtestService,
+      useClass: BlindtestService,
+    },
+    DeepseekService,
+    GPTService,
+  ],
   exports: [StreamingService, BlindtestService, DeepseekService, GPTService],
 })
 export class CommandsModule {}

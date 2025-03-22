@@ -1,4 +1,10 @@
-import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
+import {
+  Injectable,
+  Logger,
+  OnModuleInit,
+  Inject,
+  forwardRef,
+} from '@nestjs/common';
 import { SlashCommand, Context, SlashCommandContext, Options } from 'necord';
 import { PlayDto } from './play.dto';
 import {
@@ -22,6 +28,7 @@ import {
 import * as ytdl from '@distube/ytdl-core';
 import { ConfigService } from '@nestjs/config';
 import { GuildQueue, QueueItem } from './types';
+import { BlindtestService } from '../blindtest/blindtest.service';
 import axios from 'axios';
 import * as fs from 'fs';
 import * as path from 'path';
@@ -71,7 +78,11 @@ export class StreamingService implements OnModuleInit {
   private agent: ytdl.Agent;
   private tempDir: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    @Inject(forwardRef(() => BlindtestService))
+    private readonly blindtestService: BlindtestService,
+  ) {
     // Créer un dossier temporaire pour les fichiers audio
     this.tempDir = path.join(os.tmpdir(), 'graditunes');
     if (!fs.existsSync(this.tempDir)) {
@@ -592,6 +603,19 @@ export class StreamingService implements OnModuleInit {
       return;
     }
 
+    // Vérifier si un blindtest est en cours
+    const blindtestState = this.blindtestService.getBlindtestState(
+      interaction.guild.id,
+    );
+    if (blindtestState.isActive) {
+      await interaction.reply({
+        content:
+          'Un blindtest est en cours. Impossible de jouer de la musique pendant un blindtest.',
+        ephemeral: true,
+      });
+      return;
+    }
+
     await interaction.deferReply();
 
     try {
@@ -790,6 +814,19 @@ export class StreamingService implements OnModuleInit {
       return;
     }
 
+    // Vérifier si un blindtest est en cours
+    const blindtestState = this.blindtestService.getBlindtestState(
+      interaction.guild.id,
+    );
+    if (blindtestState.isActive) {
+      await interaction.reply({
+        content:
+          "Un blindtest est en cours. Impossible de voir la file d'attente pendant un blindtest.",
+        ephemeral: true,
+      });
+      return;
+    }
+
     const queue = this.queues.get(interaction.guildId || '');
 
     if (!queue || queue.items.length === 0) {
@@ -868,7 +905,12 @@ export class StreamingService implements OnModuleInit {
     }
   }
 
-  public async searchAndGetVideoUrl(searchQuery: string): Promise<string> {
+  public async searchAndGetVideoUrl(
+    searchQuery: string,
+    retryCount = 0,
+  ): Promise<string> {
+    const maxRetries = 3;
+
     try {
       const apiKey = this.configService.get<string>('YOUTUBE_API_KEY');
       if (!apiKey) {
@@ -881,7 +923,7 @@ export class StreamingService implements OnModuleInit {
       await new Promise((resolve) => setTimeout(resolve, 1000));
 
       const url = `https://www.googleapis.com/youtube/v3/search`;
-      const params = {
+      const baseParams = {
         part: 'snippet',
         q: searchQuery,
         type: 'video',
@@ -889,13 +931,26 @@ export class StreamingService implements OnModuleInit {
         key: apiKey,
         regionCode: 'FR',
         videoEmbeddable: 'true',
-        videoDuration: 'medium',
         order: 'relevance',
       };
 
-      this.logger.debug(`Paramètres: ${JSON.stringify(params)}`);
+      // D'abord, essayer avec des vidéos courtes (< 4 minutes)
+      const shortParams = { ...baseParams, videoDuration: 'short' };
+      this.logger.debug(`Paramètres (short): ${JSON.stringify(shortParams)}`);
+      let response = await axios.get<YouTubeSearchResponse>(url, {
+        params: shortParams,
+      });
 
-      const response = await axios.get<YouTubeSearchResponse>(url, { params });
+      // Si aucun résultat, essayer avec des vidéos moyennes (4-20 minutes)
+      if (!response.data.items || response.data.items.length === 0) {
+        const mediumParams = { ...baseParams, videoDuration: 'medium' };
+        this.logger.debug(
+          `Paramètres (medium): ${JSON.stringify(mediumParams)}`,
+        );
+        response = await axios.get<YouTubeSearchResponse>(url, {
+          params: mediumParams,
+        });
+      }
 
       if (response.data.items && response.data.items.length > 0) {
         const videoId = response.data.items[0].id.videoId;
@@ -904,6 +959,19 @@ export class StreamingService implements OnModuleInit {
 
       throw new Error('Aucune vidéo trouvée');
     } catch (error) {
+      if (axios.isAxiosError(error) && error.response?.status === 403) {
+        if (retryCount < maxRetries) {
+          this.logger.warn(
+            `Erreur 403 détectée, tentative ${retryCount + 1}/${maxRetries}`,
+          );
+          // Attendre un peu plus longtemps avant de réessayer
+          await new Promise((resolve) =>
+            setTimeout(resolve, 2000 * (retryCount + 1)),
+          );
+          return this.searchAndGetVideoUrl(searchQuery, retryCount + 1);
+        }
+      }
+
       if (axios.isAxiosError(error)) {
         this.logger.error(
           `Erreur YouTube API: ${error.response?.status} - ${error.response?.statusText}`,
