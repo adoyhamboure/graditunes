@@ -687,58 +687,63 @@ export class BlindtestService implements OnModuleInit {
     }
 
     // Attendre 20 secondes avant de passer à la question suivante
-    state.currentTimeout = setTimeout(async () => {
-      if (state.isActive) {
-        // Arrêter la musique en cours
-        if (interaction.guildId) {
-          const player = this.streamingService.getPlayer(interaction.guildId);
-          if (player) {
-            player.stop();
-            // Attendre un court instant pour s'assurer que la musique est bien arrêtée
-            await new Promise((resolve) => setTimeout(resolve, 1000));
-          }
-        }
-
-        const embed = new EmbedBuilder()
-          .setTitle('⏰ Temps écoulé !')
-          .setDescription(
-            `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
-          )
-          .setColor('#ff0000');
-
-        if (interaction.channel?.isTextBased()) {
-          const textChannel = interaction.channel as TextChannel;
-          await textChannel.send({ embeds: [embed] });
-        }
-
-        // Vérifier si le blindtest est toujours actif avant de continuer
-        if (!state.isActive) {
-          return;
-        }
-
-        // Passer à la question suivante
-        state.currentQuestionIndex++;
-        if (state.currentQuestionIndex < state.blindtest!.questions.length) {
-          // Utiliser le canal de texte pour envoyer un message
-          if (interaction.channel?.isTextBased()) {
-            const textChannel = interaction.channel as TextChannel;
-            await textChannel.send('🎵 Question suivante dans 5 secondes...');
-
-            // Attendre 5 secondes
-            setTimeout(() => {
-              // Vérifier si le blindtest est toujours actif avant de continuer
-              if (!state.isActive) {
-                return;
-              }
-              void textChannel.send('🎵 Question suivante...');
-              void this.playCurrentQuestion(interaction);
-            }, 5000);
-          }
-        } else {
-          void this.endBlindtest(interaction);
-        }
-      }
+    state.currentTimeout = setTimeout(() => {
+      void this.handleTimeout(interaction);
     }, state.duration * 1000); // Convertir les secondes en millisecondes
+  }
+
+  private async handleTimeout(
+    interaction: ChatInputCommandInteraction,
+  ): Promise<void> {
+    const state = this.getBlindtestState(interaction.guildId!);
+    if (!state.isActive) return;
+
+    const currentQuestion =
+      state.blindtest!.questions[state.currentQuestionIndex];
+
+    // Arrêter la musique en cours
+    if (interaction.guildId) {
+      const player = this.streamingService.getPlayer(interaction.guildId);
+      if (player) {
+        player.stop();
+        // Attendre un court instant pour s'assurer que la musique est bien arrêtée
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+      }
+    }
+
+    const embed = new EmbedBuilder()
+      .setTitle('⏰ Temps écoulé !')
+      .setDescription(
+        `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
+      )
+      .setColor('#ff0000');
+
+    if (interaction.channel?.isTextBased()) {
+      const textChannel = interaction.channel as TextChannel;
+      await textChannel.send({ embeds: [embed] });
+    }
+
+    // Vérifier si le blindtest est toujours actif avant de continuer
+    if (!state.isActive) return;
+
+    // Passer à la question suivante
+    state.currentQuestionIndex++;
+    if (state.currentQuestionIndex < state.blindtest!.questions.length) {
+      // Utiliser le canal de texte pour envoyer un message
+      if (interaction.channel?.isTextBased()) {
+        const textChannel = interaction.channel as TextChannel;
+        await textChannel.send('🎵 Question suivante dans 5 secondes...');
+
+        // Attendre 5 secondes avant la prochaine question
+        setTimeout(() => {
+          if (!state.isActive) return;
+          void textChannel.send('🎵 Question suivante...');
+          void this.playCurrentQuestion(interaction);
+        }, 5000);
+      }
+    } else {
+      void this.endBlindtest(interaction);
+    }
   }
 
   private async endBlindtest(

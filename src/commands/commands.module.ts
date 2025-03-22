@@ -4,6 +4,7 @@ import { StreamingService } from './streaming/streaming.service';
 import { BlindtestService } from './blindtest/blindtest.service';
 import { DeepseekService } from './blindtest/deepseek.service';
 import { GPTService } from './blindtest/gpt.service';
+import { AIService } from './ai/ai.service';
 
 @Module({
   imports: [ConfigModule],
@@ -18,7 +19,14 @@ import { GPTService } from './blindtest/gpt.service';
     },
     DeepseekService,
     GPTService,
+    AIService,
   ],
-  exports: [StreamingService, BlindtestService, DeepseekService, GPTService],
+  exports: [
+    StreamingService,
+    BlindtestService,
+    DeepseekService,
+    GPTService,
+    AIService,
+  ],
 })
 export class CommandsModule {}
