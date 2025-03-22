@@ -4,8 +4,7 @@ import {
   OnModuleInit,
   Inject,
   forwardRef,
-} from '@nestjs/common';
-import { Context, Options, SlashCommand, SlashCommandContext } from 'necord';
+} from "@nestjs/common";
 import {
   EmbedBuilder,
   ChatInputCommandInteraction,
@@ -19,13 +18,12 @@ import {
   TextInputStyle,
   ModalSubmitInteraction,
   StringSelectMenuBuilder,
-} from 'discord.js';
-import { BlindtestState } from './types';
-import { StreamingService } from '../streaming/streaming.service';
-import { DeepseekService } from './deepseek.service';
-import { GPTService } from './gpt.service';
-import { distance } from 'fastest-levenshtein';
-import { AnswerDto } from './answer.dto';
+} from "discord.js";
+import { MusicService } from "../../music/services/music.service";
+import { distance } from "fastest-levenshtein";
+import { DeepseekService } from "modules/ai/services/deepseek.service";
+import { GPTService } from "modules/ai/services/gpt.service";
+import { BlindtestState } from "../interfaces/blindtestState.interface";
 
 @Injectable()
 export class BlindtestService implements OnModuleInit {
@@ -33,14 +31,14 @@ export class BlindtestService implements OnModuleInit {
   private blindtestStates = new Map<string, BlindtestState>();
 
   constructor(
-    @Inject(forwardRef(() => StreamingService))
-    private readonly streamingService: StreamingService,
+    @Inject(forwardRef(() => MusicService))
+    private readonly musicService: MusicService,
     private readonly deepseekService: DeepseekService,
-    private readonly gptService: GPTService,
+    private readonly gptService: GPTService
   ) {}
 
   public onModuleInit() {
-    this.logger.log('BlindtestService has been initialized!');
+    this.logger.log("BlindtestService has been initialized!");
   }
 
   public getBlindtestState(guildId: string): BlindtestState {
@@ -52,24 +50,20 @@ export class BlindtestService implements OnModuleInit {
         blindtest: null,
         isQuestionSolved: false,
         duration: 30, // Durée par défaut de 30 secondes
-        difficulty: 'moyen', // Difficulté par défaut
-        aiProvider: 'deepseek', // IA par défaut
+        difficulty: "moyen", // Difficulté par défaut
+        aiProvider: "deepseek", // IA par défaut
         answeredPlayers: new Set(), // Initialiser le Set vide
       });
     }
     return this.blindtestStates.get(guildId)!;
   }
 
-  @SlashCommand({
-    name: 'blindtest-prepare',
-    description: 'Prépare un blindtest avec un thème spécifique',
-  })
-  public async onBlindtestPrepare(
-    @Context() [interaction]: SlashCommandContext,
-  ): Promise<void> {
+  public async onBlindtestPrepare([interaction]: [
+    ChatInputCommandInteraction,
+  ]): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        content: "Cette commande ne peut être utilisée que dans un serveur.",
         flags: 64, // Ephemeral
       });
       return;
@@ -77,32 +71,32 @@ export class BlindtestService implements OnModuleInit {
 
     // Créer le menu de sélection de l'IA
     const aiSelect = new StringSelectMenuBuilder()
-      .setCustomId('ai_select')
+      .setCustomId("ai_select")
       .setPlaceholder("Sélectionnez l'IA à utiliser")
       .addOptions([
         {
-          label: 'Deepseek',
-          description: 'IA rapide et efficace',
-          value: 'deepseek',
+          label: "Deepseek",
+          description: "IA rapide et efficace",
+          value: "deepseek",
         },
         {
-          label: 'GPT-4',
-          description: 'IA plus sophistiquée',
-          value: 'gpt',
+          label: "GPT-4",
+          description: "IA plus sophistiquée",
+          value: "gpt",
         },
       ]);
 
     const aiRow = new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-      aiSelect,
+      aiSelect
     );
 
     // Créer l'embed d'information
     const embed = new EmbedBuilder()
-      .setTitle('🎮 Configuration du Blindtest')
+      .setTitle("🎮 Configuration du Blindtest")
       .setDescription(
-        "Sélectionnez d'abord l'IA à utiliser, puis la difficulté, et enfin remplissez le formulaire.",
+        "Sélectionnez d'abord l'IA à utiliser, puis la difficulté, et enfin remplissez le formulaire."
       )
-      .setColor('#0099ff');
+      .setColor("#0099ff");
 
     // Envoyer le message avec le menu de sélection
     const message = await interaction.reply({
@@ -116,11 +110,11 @@ export class BlindtestService implements OnModuleInit {
       time: 60000, // 1 minute
     });
 
-    aiCollector.on('collect', (i) => {
-      if (i.customId === 'ai_select' && 'values' in i) {
+    aiCollector.on("collect", (i) => {
+      if (i.customId === "ai_select" && "values" in i) {
         const aiProviderValue = i.values[0];
         // Vérifier que la valeur est bien 'deepseek' ou 'gpt'
-        if (aiProviderValue !== 'deepseek' && aiProviderValue !== 'gpt') {
+        if (aiProviderValue !== "deepseek" && aiProviderValue !== "gpt") {
           this.logger.error(`Invalid AI provider value: ${aiProviderValue}`);
           return;
         }
@@ -129,34 +123,34 @@ export class BlindtestService implements OnModuleInit {
 
         // Créer le menu de sélection de difficulté
         const difficultySelect = new StringSelectMenuBuilder()
-          .setCustomId('difficulty_select')
-          .setPlaceholder('Sélectionnez la difficulté')
+          .setCustomId("difficulty_select")
+          .setPlaceholder("Sélectionnez la difficulté")
           .addOptions([
             {
-              label: 'Facile',
-              description: 'Questions simples et reconnaissables',
-              value: 'facile',
+              label: "Facile",
+              description: "Questions simples et reconnaissables",
+              value: "facile",
             },
             {
-              label: 'Moyen',
-              description: 'Questions moyennement difficiles',
-              value: 'moyen',
+              label: "Moyen",
+              description: "Questions moyennement difficiles",
+              value: "moyen",
             },
             {
-              label: 'Difficile',
-              description: 'Questions pour les experts',
-              value: 'difficile',
+              label: "Difficile",
+              description: "Questions pour les experts",
+              value: "difficile",
             },
             {
-              label: 'Impossible',
-              description: 'Questions extrêmement difficiles',
-              value: 'impossible',
+              label: "Impossible",
+              description: "Questions extrêmement difficiles",
+              value: "impossible",
             },
           ]);
 
         const difficultyRow =
           new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-            difficultySelect,
+            difficultySelect
           );
 
         // Mettre à jour le message avec le menu de difficulté
@@ -170,108 +164,108 @@ export class BlindtestService implements OnModuleInit {
           time: 60000,
         });
 
-        difficultyCollector.on('collect', (j) => {
-          if (j.customId === 'difficulty_select' && 'values' in j) {
+        difficultyCollector.on("collect", (j) => {
+          if (j.customId === "difficulty_select" && "values" in j) {
             const difficulty = j.values[0];
             state.difficulty = difficulty;
 
             // Créer le modal avec la difficulté sélectionnée
             const modal = new ModalBuilder()
-              .setCustomId('blindtest_prepare_modal')
-              .setTitle('Configuration du Blindtest');
+              .setCustomId("blindtest_prepare_modal")
+              .setTitle("Configuration du Blindtest");
 
             const durationInput = new TextInputBuilder()
-              .setCustomId('duration_input')
-              .setLabel('Durée par question (en secondes)')
+              .setCustomId("duration_input")
+              .setLabel("Durée par question (en secondes)")
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
-              .setValue('30')
+              .setValue("30")
               .setMaxLength(3);
 
             const promptInput = new TextInputBuilder()
-              .setCustomId('prompt_input')
-              .setLabel('Thème du blindtest')
-              .setPlaceholder('ex: musique de jeux vidéo')
+              .setCustomId("prompt_input")
+              .setLabel("Thème du blindtest")
+              .setPlaceholder("ex: musique de jeux vidéo")
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
               .setMaxLength(100);
 
             const questionCountInput = new TextInputBuilder()
-              .setCustomId('question_count_input')
-              .setLabel('Nombre de questions')
+              .setCustomId("question_count_input")
+              .setLabel("Nombre de questions")
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
-              .setValue('10')
+              .setValue("10")
               .setMaxLength(2);
 
             const answerTypeInput = new TextInputBuilder()
-              .setCustomId('answer_type_input')
-              .setLabel('Type de réponse attendu')
+              .setCustomId("answer_type_input")
+              .setLabel("Type de réponse attendu")
               .setStyle(TextInputStyle.Short)
               .setRequired(true)
-              .setPlaceholder('ex: nom du jeu, artiste, titre de la musique')
+              .setPlaceholder("ex: nom du jeu, artiste, titre de la musique")
               .setMaxLength(50);
 
             const firstActionRow =
               new ActionRowBuilder<TextInputBuilder>().addComponents(
-                durationInput,
+                durationInput
               );
             const secondActionRow =
               new ActionRowBuilder<TextInputBuilder>().addComponents(
-                promptInput,
+                promptInput
               );
             const thirdActionRow =
               new ActionRowBuilder<TextInputBuilder>().addComponents(
-                questionCountInput,
+                questionCountInput
               );
             const fourthActionRow =
               new ActionRowBuilder<TextInputBuilder>().addComponents(
-                answerTypeInput,
+                answerTypeInput
               );
 
             modal.addComponents(
               firstActionRow,
               secondActionRow,
               thirdActionRow,
-              fourthActionRow,
+              fourthActionRow
             );
 
             void j.showModal(modal);
           }
         });
 
-        difficultyCollector.on('end', () => {
+        difficultyCollector.on("end", () => {
           // Désactiver le menu de sélection de difficulté une fois le temps écoulé
           const disabledDifficultySelect = new StringSelectMenuBuilder()
-            .setCustomId('difficulty_select')
-            .setPlaceholder('Sélectionnez la difficulté')
+            .setCustomId("difficulty_select")
+            .setPlaceholder("Sélectionnez la difficulté")
             .addOptions([
               {
-                label: 'Facile',
-                description: 'Questions simples et reconnaissables',
-                value: 'facile',
+                label: "Facile",
+                description: "Questions simples et reconnaissables",
+                value: "facile",
               },
               {
-                label: 'Moyen',
-                description: 'Questions moyennement difficiles',
-                value: 'moyen',
+                label: "Moyen",
+                description: "Questions moyennement difficiles",
+                value: "moyen",
               },
               {
-                label: 'Difficile',
-                description: 'Questions pour les experts',
-                value: 'difficile',
+                label: "Difficile",
+                description: "Questions pour les experts",
+                value: "difficile",
               },
               {
-                label: 'Impossible',
-                description: 'Questions extrêmement difficiles',
-                value: 'impossible',
+                label: "Impossible",
+                description: "Questions extrêmement difficiles",
+                value: "impossible",
               },
             ])
             .setDisabled(true);
 
           const disabledDifficultyRow =
             new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-              disabledDifficultySelect,
+              disabledDifficultySelect
             );
           void interaction.editReply({
             components: [disabledDifficultyRow],
@@ -280,39 +274,39 @@ export class BlindtestService implements OnModuleInit {
       }
     });
 
-    aiCollector.on('end', () => {
+    aiCollector.on("end", () => {
       // Désactiver le menu de sélection de l'IA une fois le temps écoulé
       const disabledAiSelect = new StringSelectMenuBuilder()
-        .setCustomId('ai_select')
+        .setCustomId("ai_select")
         .setPlaceholder("Sélectionnez l'IA à utiliser")
         .addOptions([
           {
-            label: 'Deepseek',
-            description: 'IA rapide et efficace',
-            value: 'deepseek',
+            label: "Deepseek",
+            description: "IA rapide et efficace",
+            value: "deepseek",
           },
           {
-            label: 'GPT-4',
-            description: 'IA plus sophistiquée',
-            value: 'gpt',
+            label: "GPT-4",
+            description: "IA plus sophistiquée",
+            value: "gpt",
           },
         ])
         .setDisabled(true);
 
       const disabledAiRow =
         new ActionRowBuilder<StringSelectMenuBuilder>().addComponents(
-          disabledAiSelect,
+          disabledAiSelect
         );
       void interaction.editReply({ components: [disabledAiRow] });
     });
   }
 
   public async handleBlindtestPrepareModal(
-    interaction: ModalSubmitInteraction,
+    interaction: ModalSubmitInteraction
   ): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        content: "Cette commande ne peut être utilisée que dans un serveur.",
         flags: 64, // Ephemeral
       });
       return;
@@ -320,20 +314,20 @@ export class BlindtestService implements OnModuleInit {
 
     const state = this.getBlindtestState(interaction.guild.id);
     const duration = parseInt(
-      interaction.fields.getTextInputValue('duration_input'),
-      10,
+      interaction.fields.getTextInputValue("duration_input"),
+      10
     );
-    const prompt = interaction.fields.getTextInputValue('prompt_input');
+    const prompt = interaction.fields.getTextInputValue("prompt_input");
     const questionCount = parseInt(
-      interaction.fields.getTextInputValue('question_count_input'),
-      10,
+      interaction.fields.getTextInputValue("question_count_input"),
+      10
     );
     const answerType =
-      interaction.fields.getTextInputValue('answer_type_input');
+      interaction.fields.getTextInputValue("answer_type_input");
 
     if (isNaN(duration) || duration < 10 || duration > 300) {
       await interaction.reply({
-        content: 'La durée doit être un nombre entre 10 et 300 secondes.',
+        content: "La durée doit être un nombre entre 10 et 300 secondes.",
         flags: 64, // Ephemeral
       });
       return;
@@ -341,7 +335,7 @@ export class BlindtestService implements OnModuleInit {
 
     if (isNaN(questionCount) || questionCount < 1 || questionCount > 50) {
       await interaction.reply({
-        content: 'Le nombre de questions doit être entre 1 et 50.',
+        content: "Le nombre de questions doit être entre 1 et 50.",
         flags: 64, // Ephemeral
       });
       return;
@@ -351,7 +345,7 @@ export class BlindtestService implements OnModuleInit {
 
     // Répondre immédiatement avec un message de chargement
     await interaction.reply({
-      content: '🎵 Génération du blindtest en cours...',
+      content: "🎵 Génération du blindtest en cours...",
       flags: 64, // Ephemeral
     });
 
@@ -360,17 +354,35 @@ export class BlindtestService implements OnModuleInit {
       if (interaction.channel?.isTextBased()) {
         const textChannel = interaction.channel as TextChannel;
         await textChannel.send(
-          `🤖 Génération des questions avec ${state.aiProvider === 'gpt' ? 'GPT-4' : 'Deepseek'}...`,
+          `🤖 Génération des questions avec ${state.aiProvider === "gpt" ? "GPT-4" : "Deepseek"}...`
         );
       }
 
-      const blindtest = await (
-        state.aiProvider === 'gpt' ? this.gptService : this.deepseekService
-      ).generateBlindtest(prompt, questionCount, answerType, state.difficulty);
+      const aiService =
+        state.aiProvider === "gpt" ? this.gptService : this.deepseekService;
+      const blindtestResult = await aiService.generateBlindtest(
+        prompt,
+        questionCount,
+        answerType,
+        state.difficulty
+      );
+
+      if (!blindtestResult || typeof blindtestResult !== "object") {
+        throw new Error("Le blindtest généré est invalide");
+      }
+
+      // Type assertion après vérification
+      const blindtest = blindtestResult;
+
+      if (!Array.isArray(blindtest.questions)) {
+        throw new Error(
+          "Le blindtest généré est invalide : questions manquantes"
+        );
+      }
 
       if (interaction.channel?.isTextBased()) {
         const textChannel = interaction.channel as TextChannel;
-        await textChannel.send('Recherche des vidéos YouTube...');
+        await textChannel.send("Recherche des vidéos YouTube...");
       }
 
       // Pour chaque question, chercher une URL YouTube correspondante
@@ -387,14 +399,21 @@ export class BlindtestService implements OnModuleInit {
 
         for (const question of batch) {
           try {
-            const searchQuery = `${question.youtubeSearch}`;
+            if (!question || typeof question.youtubeSearch !== "string") {
+              this.logger.warn(
+                "Question invalide détectée, passage à la suivante"
+              );
+              continue;
+            }
+
+            const searchQuery = question.youtubeSearch;
             this.logger.log(`Recherche YouTube pour: ${searchQuery}`);
 
             const videoUrl =
-              await this.streamingService.searchAndGetVideoUrl(searchQuery);
+              await this.musicService.searchAndGetVideoUrl(searchQuery);
             if (!videoUrl) {
               this.logger.warn(
-                `Aucune URL YouTube trouvée pour la question: ${searchQuery}`,
+                `Aucune URL YouTube trouvée pour la question: ${searchQuery}`
               );
               continue;
             }
@@ -403,7 +422,7 @@ export class BlindtestService implements OnModuleInit {
             this.logger.log(`Vidéo trouvée pour: ${searchQuery}`);
           } catch (error) {
             this.logger.error(
-              `Erreur lors de la recherche de l'URL YouTube pour la question: ${error}`,
+              `Erreur lors de la recherche de l'URL YouTube pour la question: ${error}`
             );
           }
         }
@@ -411,33 +430,35 @@ export class BlindtestService implements OnModuleInit {
         // Mettre à jour le message de progression
         if (interaction.channel?.isTextBased()) {
           const textChannel = interaction.channel as TextChannel;
-          const progress = Math.round(
-            (foundVideos / blindtest.questions.length) * 100,
-          );
+          const totalQuestions = blindtest.questions.length;
+          const progress = Math.round((foundVideos / totalQuestions) * 100);
           await textChannel.send(
-            `🎵 Recherche des vidéos en cours... ${foundVideos}/${blindtest.questions.length} (${progress}%)`,
+            `🎵 Recherche des vidéos en cours... ${foundVideos}/${totalQuestions} (${progress}%)`
           );
         }
       }
 
       // Vérifier si toutes les questions ont une URL
-      const questionsWithoutUrl = blindtest.questions.filter((q) => !q.url);
-      if (questionsWithoutUrl.length > 0) {
+      const questionsWithoutUrl = blindtest.questions.filter((q) => !q?.url);
+      const questionsWithoutUrlCount = questionsWithoutUrl.length;
+
+      if (questionsWithoutUrlCount > 0) {
         this.logger.warn(
-          `${questionsWithoutUrl.length} questions n'ont pas d'URL YouTube`,
+          `${questionsWithoutUrlCount} questions n'ont pas d'URL YouTube`
         );
         if (interaction.channel?.isTextBased()) {
           const textChannel = interaction.channel as TextChannel;
           await textChannel.send(
-            `⚠️ ${questionsWithoutUrl.length} questions n'ont pas de vidéo associée`,
+            `⚠️ ${questionsWithoutUrlCount} questions n'ont pas de vidéo associée`
           );
         }
       }
 
       if (interaction.channel?.isTextBased()) {
         const textChannel = interaction.channel as TextChannel;
+        const totalQuestions = blindtest.questions.length;
         await textChannel.send(
-          `✅ ${foundVideos} vidéos trouvées sur ${blindtest.questions.length} questions`,
+          `✅ ${foundVideos} vidéos trouvées sur ${totalQuestions} questions`
         );
       }
 
@@ -446,12 +467,23 @@ export class BlindtestService implements OnModuleInit {
       state.currentQuestionIndex = 0;
       state.scores.clear();
 
+      if (
+        !blindtest.theme ||
+        typeof blindtest.theme !== "string" ||
+        !blindtest.answerType ||
+        typeof blindtest.answerType !== "string"
+      ) {
+        throw new Error(
+          "Le blindtest généré est invalide : thème ou type de réponse manquant"
+        );
+      }
+
       const embed = new EmbedBuilder()
-        .setTitle('🎮 Blindtest Prêt !')
+        .setTitle("🎮 Blindtest Prêt !")
         .setDescription(
-          `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**\nType de réponse attendu: **${blindtest.answerType}**\nDifficulté: **${state.difficulty}**\nIA utilisée: **${state.aiProvider === 'gpt' ? 'GPT-4' : 'Deepseek'}**\nVidéos trouvées: **${foundVideos}/${blindtest.questions.length}**`,
+          `Thème: **${blindtest.theme}**\nNombre de questions: **${blindtest.questions.length}**\nDurée par question: **${duration} secondes**\nType de réponse attendu: **${blindtest.answerType}**\nDifficulté: **${state.difficulty}**\nIA utilisée: **${state.aiProvider === "gpt" ? "GPT-4" : "Deepseek"}**\nVidéos trouvées: **${foundVideos}/${blindtest.questions.length}**`
         )
-        .setColor('#00ff00');
+        .setColor("#00ff00");
 
       // Envoyer le message final dans le canal
       if (interaction.channel?.isTextBased()) {
@@ -465,22 +497,18 @@ export class BlindtestService implements OnModuleInit {
         const textChannel = interaction.channel as TextChannel;
         await textChannel.send({
           content:
-            'Une erreur est survenue lors de la préparation du blindtest. Veuillez réessayer.',
+            "Une erreur est survenue lors de la préparation du blindtest. Veuillez réessayer.",
         });
       }
     }
   }
 
-  @SlashCommand({
-    name: 'blindtest-start',
-    description: 'Démarre le blindtest',
-  })
-  public async onBlindtestStart(
-    @Context() [interaction]: SlashCommandContext,
-  ): Promise<void> {
+  public async onBlindtestStart([interaction]: [
+    ChatInputCommandInteraction,
+  ]): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        content: "Cette commande ne peut être utilisée que dans un serveur.",
         flags: 64, // Ephemeral
       });
       return;
@@ -499,18 +527,18 @@ export class BlindtestService implements OnModuleInit {
 
     if (state.isActive) {
       await interaction.reply({
-        content: 'Un blindtest est déjà en cours !',
+        content: "Un blindtest est déjà en cours !",
         flags: 64, // Ephemeral
       });
       return;
     }
 
     state.isActive = true;
-    await this.playCurrentQuestion(interaction as ChatInputCommandInteraction);
+    await this.playCurrentQuestion(interaction);
   }
 
   private async playCurrentQuestion(
-    interaction: ChatInputCommandInteraction,
+    interaction: ChatInputCommandInteraction
   ): Promise<void> {
     if (!interaction.guild) return;
 
@@ -531,7 +559,7 @@ export class BlindtestService implements OnModuleInit {
 
     // Arrêter la musique en cours avant de jouer la nouvelle question
     if (interaction.guildId) {
-      const player = this.streamingService.getPlayer(interaction.guildId);
+      const player = this.musicService.getPlayer(interaction.guildId);
       if (player) {
         player.stop();
         // Attendre un court instant pour s'assurer que la musique est bien arrêtée
@@ -546,13 +574,13 @@ export class BlindtestService implements OnModuleInit {
     if (interaction.channel?.isTextBased()) {
       const textChannel = interaction.channel as TextChannel;
       const scores = Array.from(state.scores.entries()).sort(
-        (a, b) => b[1] - a[1],
+        (a, b) => b[1] - a[1]
       );
 
       if (scores.length > 0 && scores.some(([, score]) => score > 0)) {
         const scoresEmbed = new EmbedBuilder()
-          .setTitle('🎯 Scores actuels')
-          .setColor('#00ff00');
+          .setTitle("🎯 Scores actuels")
+          .setColor("#00ff00");
 
         for (const [userId, score] of scores) {
           const user = await interaction.client.users.fetch(userId);
@@ -572,39 +600,40 @@ export class BlindtestService implements OnModuleInit {
       const voiceChannel = member.voice.channel;
       if (voiceChannel) {
         try {
-          let videoUrl = currentQuestion.url;
+          let videoUrl: string | null = currentQuestion.url ?? null;
 
           // Si l'URL n'est pas définie, rechercher la vidéo avec youtubeSearch
           if (!videoUrl && currentQuestion.youtubeSearch) {
-            videoUrl = await this.streamingService.searchAndGetVideoUrl(
-              currentQuestion.youtubeSearch,
+            videoUrl = await this.musicService.searchAndGetVideoUrl(
+              currentQuestion.youtubeSearch
             );
           }
 
           if (!videoUrl) {
-            throw new Error('URL de la musique non définie');
+            throw new Error("URL de la musique non définie");
           }
 
-          await this.streamingService.playMusic(
+          await this.musicService.playMusic(
             interaction.guildId,
             voiceChannel.id,
+            interaction.channelId,
             videoUrl,
-            { voiceAdapterCreator: interaction.guild.voiceAdapterCreator },
+            interaction
           );
         } catch (error) {
           this.logger.error(
-            `Erreur lors de la lecture de la musique: ${error}`,
+            `Erreur lors de la lecture de la musique: ${error}`
           );
 
           // Envoyer un message d'erreur dans le canal de texte
           if (interaction.channel?.isTextBased()) {
             const textChannel = interaction.channel as TextChannel;
             const errorEmbed = new EmbedBuilder()
-              .setTitle('❌ Erreur de lecture')
+              .setTitle("❌ Erreur de lecture")
               .setDescription(
-                'Une erreur est survenue lors de la lecture de la musique. Passage à la question suivante...',
+                "Une erreur est survenue lors de la lecture de la musique. Passage à la question suivante..."
               )
-              .setColor('#ff0000');
+              .setColor("#ff0000");
 
             await textChannel.send({ embeds: [errorEmbed] });
           }
@@ -614,7 +643,7 @@ export class BlindtestService implements OnModuleInit {
           if (state.currentQuestionIndex < state.blindtest!.questions.length) {
             if (interaction.channel?.isTextBased()) {
               const textChannel = interaction.channel as TextChannel;
-              await textChannel.send('🎵 Question suivante...');
+              await textChannel.send("🎵 Question suivante...");
             }
             await this.playCurrentQuestion(interaction);
           } else {
@@ -627,24 +656,24 @@ export class BlindtestService implements OnModuleInit {
 
     // Créer le bouton de réponse
     const answerButton = new ButtonBuilder()
-      .setCustomId('answer_question')
-      .setLabel('Répondre')
+      .setCustomId("answer_question")
+      .setLabel("Répondre")
       .setStyle(ButtonStyle.Primary)
-      .setEmoji('✍️');
+      .setEmoji("✍️");
 
     const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-      answerButton,
+      answerButton
     );
 
     // Envoyer le message avec les instructions et le bouton
     if (interaction.channel?.isTextBased()) {
       const textChannel = interaction.channel as TextChannel;
       const questionEmbed = new EmbedBuilder()
-        .setTitle('🎵 Question en cours')
+        .setTitle("🎵 Question en cours")
         .setDescription(
-          `Question ${state.currentQuestionIndex + 1}/${state.blindtest!.questions.length}\nType de réponse attendu: **${state.blindtest!.answerType}**\nCliquez sur le bouton ci-dessous pour répondre !`,
+          `Question ${state.currentQuestionIndex + 1}/${state.blindtest!.questions.length}\nType de réponse attendu: **${state.blindtest!.answerType}**\nCliquez sur le bouton ci-dessous pour répondre !`
         )
-        .setColor('#0099ff');
+        .setColor("#0099ff");
 
       const message = await textChannel.send({
         embeds: [questionEmbed],
@@ -659,15 +688,15 @@ export class BlindtestService implements OnModuleInit {
         time: state.duration * 1000, // Convertir les secondes en millisecondes
       });
 
-      collector.on('collect', (i) => {
-        if (i.customId === 'answer_question' && !state.isQuestionSolved) {
+      collector.on("collect", (i) => {
+        if (i.customId === "answer_question" && !state.isQuestionSolved) {
           const modal = new ModalBuilder()
-            .setCustomId('answer_modal')
-            .setTitle('Répondre à la question');
+            .setCustomId("answer_modal")
+            .setTitle("Répondre à la question");
 
           const answerInput = new TextInputBuilder()
-            .setCustomId('answer_input')
-            .setLabel('Votre réponse')
+            .setCustomId("answer_input")
+            .setLabel("Votre réponse")
             .setStyle(TextInputStyle.Short)
             .setRequired(true)
             .setMaxLength(100);
@@ -680,7 +709,7 @@ export class BlindtestService implements OnModuleInit {
         }
       });
 
-      collector.on('end', () => {
+      collector.on("end", () => {
         // Supprimer le bouton une fois le temps écoulé
         void message.edit({ components: [] });
       });
@@ -693,7 +722,7 @@ export class BlindtestService implements OnModuleInit {
   }
 
   private async handleTimeout(
-    interaction: ChatInputCommandInteraction,
+    interaction: ChatInputCommandInteraction
   ): Promise<void> {
     const state = this.getBlindtestState(interaction.guildId!);
     if (!state.isActive) return;
@@ -703,7 +732,7 @@ export class BlindtestService implements OnModuleInit {
 
     // Arrêter la musique en cours
     if (interaction.guildId) {
-      const player = this.streamingService.getPlayer(interaction.guildId);
+      const player = this.musicService.getPlayer(interaction.guildId);
       if (player) {
         player.stop();
         // Attendre un court instant pour s'assurer que la musique est bien arrêtée
@@ -712,11 +741,11 @@ export class BlindtestService implements OnModuleInit {
     }
 
     const embed = new EmbedBuilder()
-      .setTitle('⏰ Temps écoulé !')
+      .setTitle("⏰ Temps écoulé !")
       .setDescription(
-        `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
+        `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`
       )
-      .setColor('#ff0000');
+      .setColor("#ff0000");
 
     if (interaction.channel?.isTextBased()) {
       const textChannel = interaction.channel as TextChannel;
@@ -732,12 +761,12 @@ export class BlindtestService implements OnModuleInit {
       // Utiliser le canal de texte pour envoyer un message
       if (interaction.channel?.isTextBased()) {
         const textChannel = interaction.channel as TextChannel;
-        await textChannel.send('🎵 Question suivante dans 5 secondes...');
+        await textChannel.send("🎵 Question suivante dans 5 secondes...");
 
         // Attendre 5 secondes avant la prochaine question
         setTimeout(() => {
           if (!state.isActive) return;
-          void textChannel.send('🎵 Question suivante...');
+          void textChannel.send("🎵 Question suivante...");
           void this.playCurrentQuestion(interaction);
         }, 5000);
       }
@@ -747,7 +776,7 @@ export class BlindtestService implements OnModuleInit {
   }
 
   private async endBlindtest(
-    interaction: ChatInputCommandInteraction,
+    interaction: ChatInputCommandInteraction
   ): Promise<void> {
     if (!interaction.guild) return;
 
@@ -755,12 +784,12 @@ export class BlindtestService implements OnModuleInit {
     state.isActive = false;
 
     const embed = new EmbedBuilder()
-      .setTitle('🏆 Blindtest Terminé !')
-      .setDescription('Voici les scores :')
-      .setColor('#ffd700');
+      .setTitle("🏆 Blindtest Terminé !")
+      .setDescription("Voici les scores :")
+      .setColor("#ffd700");
 
     const scores = Array.from(state.scores.entries()).sort(
-      (a, b) => b[1] - a[1],
+      (a, b) => b[1] - a[1]
     );
 
     for (const [userId, score] of scores) {
@@ -774,59 +803,9 @@ export class BlindtestService implements OnModuleInit {
     }
   }
 
-  @SlashCommand({
-    name: 'answer',
-    description: 'Donne une réponse pour le blindtest en cours',
-  })
-  public async onAnswer(
-    @Context() [interaction]: SlashCommandContext,
-    @Options() { reponse }: AnswerDto,
-  ): Promise<void> {
-    if (!interaction.guild) {
-      await interaction.reply({
-        content: 'Cette commande ne peut être utilisée que dans un serveur.',
-        flags: 64, // Ephemeral
-      });
-      return;
-    }
-
-    const state = this.getBlindtestState(interaction.guild.id);
-    if (!state.isActive || !state.blindtest) {
-      await interaction.reply({
-        content: "Aucun blindtest n'est en cours.",
-        flags: 64, // Ephemeral
-      });
-      return;
-    }
-
-    const currentQuestion =
-      state.blindtest.questions[state.currentQuestionIndex];
-    const userAnswer = reponse;
-
-    // Vérifier si la réponse est correcte avec une distance de Levenshtein acceptable
-    const isCorrect = currentQuestion.acceptable_answers.some(
-      (answer) => distance(userAnswer.toLowerCase(), answer.toLowerCase()) <= 2,
-    );
-
-    if (isCorrect) {
-      const currentScore = state.scores.get(interaction.user.id) || 0;
-      state.scores.set(interaction.user.id, currentScore + 1);
-
-      await interaction.reply({
-        content: '✅ Correct ! +1 point',
-        flags: 64, // Ephemeral
-      });
-    } else {
-      await interaction.reply({
-        content: '❌ Incorrect, essayez encore !',
-        flags: 64, // Ephemeral
-      });
-    }
-  }
-
   private checkAllPlayersAnswered(
     interaction: ModalSubmitInteraction,
-    state: BlindtestState,
+    state: BlindtestState
   ): boolean {
     if (!interaction.guild) return false;
 
@@ -852,7 +831,7 @@ export class BlindtestService implements OnModuleInit {
 
   private async handleAllPlayersAnswered(
     interaction: ModalSubmitInteraction,
-    state: BlindtestState,
+    state: BlindtestState
   ): Promise<void> {
     if (!interaction.guild) return;
 
@@ -861,11 +840,11 @@ export class BlindtestService implements OnModuleInit {
       state.blindtest!.questions[state.currentQuestionIndex];
 
     const embed = new EmbedBuilder()
-      .setTitle('🎉 Tous les joueurs ont trouvé la réponse !')
+      .setTitle("🎉 Tous les joueurs ont trouvé la réponse !")
       .setDescription(
-        `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`,
+        `La réponse était : **${currentQuestion.displayableAnswer}**\nTitre : **${currentQuestion.meta.title}**\nCompositeur : **${currentQuestion.meta.composer}**`
       )
-      .setColor('#00ff00');
+      .setColor("#00ff00");
 
     await textChannel.send({ embeds: [embed] });
 
@@ -880,7 +859,7 @@ export class BlindtestService implements OnModuleInit {
     // Passer à la question suivante ou terminer le blindtest
     state.currentQuestionIndex++;
     if (state.currentQuestionIndex < state.blindtest!.questions.length) {
-      await textChannel.send('🎵 Question suivante...');
+      await textChannel.send("🎵 Question suivante...");
       // Créer un ChatInputCommandInteraction factice pour playCurrentQuestion
       const fakeInteraction = {
         ...interaction,
@@ -894,7 +873,7 @@ export class BlindtestService implements OnModuleInit {
     } else {
       // Arrêter la musique avant de terminer le blindtest
       if (interaction.guildId) {
-        const player = this.streamingService.getPlayer(interaction.guildId);
+        const player = this.musicService.getPlayer(interaction.guildId);
         if (player) {
           player.stop();
         }
@@ -913,11 +892,11 @@ export class BlindtestService implements OnModuleInit {
   }
 
   public async handleAnswerModal(
-    interaction: ModalSubmitInteraction,
+    interaction: ModalSubmitInteraction
   ): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        content: "Cette commande ne peut être utilisée que dans un serveur.",
         flags: 64,
       });
       return;
@@ -934,11 +913,11 @@ export class BlindtestService implements OnModuleInit {
 
     const currentQuestion =
       state.blindtest.questions[state.currentQuestionIndex];
-    const userAnswer = interaction.fields.getTextInputValue('answer_input');
+    const userAnswer = interaction.fields.getTextInputValue("answer_input");
 
     // Vérifier si la réponse est correcte avec une distance de Levenshtein acceptable
     const isCorrect = currentQuestion.acceptable_answers.some(
-      (answer) => distance(userAnswer.toLowerCase(), answer.toLowerCase()) <= 2,
+      (answer) => distance(userAnswer.toLowerCase(), answer.toLowerCase()) <= 2
     );
 
     if (isCorrect && !state.isQuestionSolved) {
@@ -952,24 +931,24 @@ export class BlindtestService implements OnModuleInit {
         try {
           const textChannel = interaction.channel as TextChannel;
           const message = await textChannel.messages.fetch(
-            state.currentMessageId,
+            state.currentMessageId
           );
           if (message) {
             const disabledButton = new ButtonBuilder()
-              .setCustomId('answer_question')
-              .setLabel('Répondu')
+              .setCustomId("answer_question")
+              .setLabel("Répondu")
               .setStyle(ButtonStyle.Secondary)
-              .setEmoji('✅')
+              .setEmoji("✅")
               .setDisabled(true);
 
             const row = new ActionRowBuilder<ButtonBuilder>().addComponents(
-              disabledButton,
+              disabledButton
             );
             await message.edit({ components: [row] });
           }
         } catch (error) {
           this.logger.error(
-            `Erreur lors de la désactivation du bouton: ${error}`,
+            `Erreur lors de la désactivation du bouton: ${error}`
           );
         }
       }
@@ -978,51 +957,47 @@ export class BlindtestService implements OnModuleInit {
       if (interaction.channel?.isTextBased()) {
         const textChannel = interaction.channel as TextChannel;
         const correctAnswerEmbed = new EmbedBuilder()
-          .setTitle('🎉 Bonne réponse !')
+          .setTitle("🎉 Bonne réponse !")
           .setDescription(
-            `${interaction.user.username} a trouvé la bonne réponse !`,
+            `${interaction.user.username} a trouvé la bonne réponse !`
           )
-          .setColor('#00ff00');
+          .setColor("#00ff00");
 
         void textChannel.send({ embeds: [correctAnswerEmbed] });
       }
 
       await interaction.reply({
-        content: '✅ Correct ! +1 point',
+        content: "✅ Correct ! +1 point",
         flags: 64,
       });
 
       // Vérifier si tous les joueurs ont répondu
       const allPlayersAnswered = this.checkAllPlayersAnswered(
         interaction,
-        state,
+        state
       );
       if (allPlayersAnswered) {
         await this.handleAllPlayersAnswered(interaction, state);
       }
     } else if (state.isQuestionSolved) {
       await interaction.reply({
-        content: '❌ Cette question a déjà été résolue !',
+        content: "❌ Cette question a déjà été résolue !",
         flags: 64,
       });
     } else {
       await interaction.reply({
-        content: '❌ Incorrect, essayez encore !',
+        content: "❌ Incorrect, essayez encore !",
         flags: 64,
       });
     }
   }
 
-  @SlashCommand({
-    name: 'blindtest-stop',
-    description: 'Arrête le blindtest en cours et affiche les scores',
-  })
-  public async onBlindtestStop(
-    @Context() [interaction]: SlashCommandContext,
-  ): Promise<void> {
+  public async onBlindtestStop([interaction]: [
+    ChatInputCommandInteraction,
+  ]): Promise<void> {
     if (!interaction.guild) {
       await interaction.reply({
-        content: 'Cette commande ne peut être utilisée que dans un serveur.',
+        content: "Cette commande ne peut être utilisée que dans un serveur.",
         flags: 64, // Ephemeral
       });
       return;
@@ -1039,7 +1014,7 @@ export class BlindtestService implements OnModuleInit {
 
     // Arrêter la musique
     if (interaction.guildId) {
-      const player = this.streamingService.getPlayer(interaction.guildId);
+      const player = this.musicService.getPlayer(interaction.guildId);
       if (player) {
         player.stop();
       }
@@ -1055,17 +1030,17 @@ export class BlindtestService implements OnModuleInit {
     state.isActive = false;
 
     const embed = new EmbedBuilder()
-      .setTitle('🏁 Blindtest Arrêté !')
-      .setDescription('Voici les scores finaux :')
-      .setColor('#ffd700');
+      .setTitle("🏁 Blindtest Arrêté !")
+      .setDescription("Voici les scores finaux :")
+      .setColor("#ffd700");
 
     const scores = Array.from(state.scores.entries()).sort(
-      (a, b) => b[1] - a[1],
+      (a, b) => b[1] - a[1]
     );
 
     if (scores.length === 0) {
       embed.addFields({
-        name: 'Aucun point',
+        name: "Aucun point",
         value: "Personne n'a marqué de points dans ce blindtest.",
       });
     } else {

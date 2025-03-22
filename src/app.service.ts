@@ -1,6 +1,6 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { Context, On, Once, ContextOf } from 'necord';
-import { BlindtestService } from './commands/blindtest/blindtest.service';
+import { Injectable, Logger } from "@nestjs/common";
+import { Context, On, Once, ContextOf } from "necord";
+import { BlindtestService } from "./modules/games/services/blindtest.service";
 
 @Injectable()
 export class AppService {
@@ -8,28 +8,28 @@ export class AppService {
 
   constructor(private readonly blindtestService: BlindtestService) {}
 
-  @Once('ready')
-  public onReady(@Context() [client]: ContextOf<'ready'>) {
+  @Once("ready")
+  public onReady(@Context() [client]: ContextOf<"ready">) {
     this.logger.log(`Bot logged in as ${client.user.username}`);
   }
 
-  @On('warn')
-  public onWarn(@Context() [message]: ContextOf<'warn'>) {
+  @On("warn")
+  public onWarn(@Context() [message]: ContextOf<"warn">) {
     this.logger.warn(message);
   }
 
-  @On('interactionCreate')
+  @On("interactionCreate")
   public async onInteractionCreate(
-    @Context() [interaction]: ContextOf<'interactionCreate'>,
+    @Context() [interaction]: ContextOf<"interactionCreate">
   ) {
     if (
       interaction.isModalSubmit() &&
-      interaction.customId === 'answer_modal'
+      interaction.customId === "answer_modal"
     ) {
       await this.blindtestService.handleAnswerModal(interaction);
     } else if (
       interaction.isModalSubmit() &&
-      interaction.customId === 'blindtest_prepare_modal'
+      interaction.customId === "blindtest_prepare_modal"
     ) {
       await this.blindtestService.handleBlindtestPrepareModal(interaction);
     }

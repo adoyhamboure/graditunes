@@ -1,7 +1,7 @@
-import { Injectable, Logger } from '@nestjs/common';
-import { ConfigService } from '@nestjs/config';
-import { Blindtest } from './types';
-import { BLINDTEST_SYSTEM_PROMPT } from './prompts';
+import { Injectable, Logger } from "@nestjs/common";
+import { ConfigService } from "@nestjs/config";
+import { BLINDTEST_SYSTEM_PROMPT } from "modules/games/constants/blindtestPrompt.constant";
+import { Blindtest } from "modules/games/interfaces/blindtest.interface";
 
 interface DeepseekResponse {
   choices: Array<{
@@ -17,10 +17,10 @@ export class DeepseekService {
   private readonly apiKey: string;
 
   constructor(private readonly configService: ConfigService) {
-    const apiKey = this.configService.get<string>('DEEPSEEK_API_KEY');
+    const apiKey = this.configService.get<string>("DEEPSEEK_API_KEY");
     if (!apiKey) {
       throw new Error(
-        'DEEPSEEK_API_KEY is not defined in environment variables',
+        "DEEPSEEK_API_KEY is not defined in environment variables"
       );
     }
     this.apiKey = apiKey;
@@ -30,68 +30,68 @@ export class DeepseekService {
     prompt: string,
     questionCount: number,
     answerType: string,
-    difficulty: string,
+    difficulty: string
   ): Promise<Blindtest> {
     this.logger.log(
-      `Generating blindtest with prompt: ${prompt}, questionCount: ${questionCount}, answerType: ${answerType}, difficulty: ${difficulty}`,
+      `Generating blindtest with prompt: ${prompt}, questionCount: ${questionCount}, answerType: ${answerType}, difficulty: ${difficulty}`
     );
 
     const userPrompt = `Generate a blindtest with ${questionCount} questions about ${prompt}. The answers should be of type: ${answerType}. The difficulty should be: ${difficulty}.`;
 
     try {
       const response = await fetch(
-        'https://api.deepseek.com/v1/chat/completions',
+        "https://api.deepseek.com/v1/chat/completions",
         {
-          method: 'POST',
+          method: "POST",
           headers: {
-            'Content-Type': 'application/json',
+            "Content-Type": "application/json",
             Authorization: `Bearer ${this.apiKey}`,
           },
           body: JSON.stringify({
-            model: 'deepseek-chat',
+            model: "deepseek-chat",
             messages: [
               {
-                role: 'system',
+                role: "system",
                 content: BLINDTEST_SYSTEM_PROMPT,
               },
               {
-                role: 'user',
+                role: "user",
                 content: userPrompt,
               },
             ],
             temperature: 0.7,
             max_tokens: 2000,
           }),
-        },
+        }
       );
 
       if (!response.ok) {
         const errorText = await response.text();
         this.logger.error(
-          `Deepseek API error: ${response.status} ${response.statusText}`,
+          `Deepseek API error: ${response.status} ${response.statusText}`
         );
         this.logger.error(`Response body: ${errorText}`);
         throw new Error(
-          `Deepseek API error: ${response.status} ${response.statusText}`,
+          `Deepseek API error: ${response.status} ${response.statusText}`
         );
       }
 
       const data = (await response.json()) as DeepseekResponse;
       this.logger.log(
-        `Raw response from Deepseek: ${JSON.stringify(data, null, 2)}`,
+        `Raw response from Deepseek: ${JSON.stringify(data, null, 2)}`
       );
 
       const content = data.choices[0].message.content;
       this.logger.log(`Deepseek response: ${content}`);
 
       if (!content) {
-        throw new Error('No content in Deepseek response');
+        throw new Error("No content in Deepseek response");
       }
 
       // Nettoyer le contenu des marqueurs de code Markdown
       const cleanContent = content
-        .replace(/```json\n?/g, '')
-        .replace(/```\n?/g, '')
+        .replace(/```json\n?/g, "")
+        .replace(/```\n?/g, "")
         .trim();
 
       this.logger.log(`Cleaned content: ${cleanContent}`);
@@ -99,7 +99,7 @@ export class DeepseekService {
       try {
         const blindtest = JSON.parse(cleanContent) as Blindtest;
         this.logger.log(
-          `Successfully parsed blindtest: ${JSON.stringify(blindtest, null, 2)}`,
+          `Successfully parsed blindtest: ${JSON.stringify(blindtest, null, 2)}`
         );
         return blindtest;
       } catch (parseError: unknown) {
