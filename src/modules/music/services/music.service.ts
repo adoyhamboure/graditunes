@@ -12,7 +12,6 @@ import {
   VoiceConnection,
 } from "@discordjs/voice";
 import { TextChannel, ChatInputCommandInteraction } from "discord.js";
-import * as ytdl from "@distube/ytdl-core";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import * as fs from "fs";
@@ -23,32 +22,6 @@ import { QueueItem } from "../interfaces/queueItem.interface";
 import { GuildQueue } from "../interfaces/guildQueue.interface";
 
 const exec = promisify(execCallback);
-
-interface Cookie {
-  name: string;
-  value: string;
-  domain: string;
-}
-
-interface YouTubePlaylistResponse {
-  items: Array<{
-    contentDetails: {
-      itemCount: string;
-    };
-  }>;
-}
-
-interface YouTubePlaylistItemsResponse {
-  items: Array<{
-    snippet: {
-      resourceId: {
-        videoId: string;
-      };
-      title: string;
-    };
-  }>;
-  nextPageToken?: string;
-}
 
 interface YouTubeSearchResponse {
   items: Array<{
@@ -65,7 +38,6 @@ export class MusicService implements OnModuleInit {
   private players = new Map<string, AudioPlayer>();
   private queues = new Map<string, GuildQueue>();
   private textChannels = new Map<string, TextChannel>();
-  private agent: ytdl.Agent;
   private tempDir: string;
 
   constructor(private readonly configService: ConfigService) {
@@ -113,78 +85,46 @@ export class MusicService implements OnModuleInit {
         this.logger.error(`YouTube API key validation failed: ${error}`);
       }
     }
-
-    this.agent = ytdl.createAgent(this.buildYoutubeCookies());
   }
 
-  private buildYoutubeCookies(): Cookie[] {
-    return [
-      {
-        name: "SID",
-        value: this.configService.get<string>("YT_SID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "HSID",
-        value: this.configService.get<string>("YT_HSID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "SSID",
-        value: this.configService.get<string>("YT_SSID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "APISID",
-        value: this.configService.get<string>("YT_APISID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "SAPISID",
-        value: this.configService.get<string>("YT_SAPISID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "__Secure-1PSID",
-        value: this.configService.get<string>("YT_1PSID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "__Secure-1PAPISID",
-        value: this.configService.get<string>("YT_1PAPISID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "__Secure-3PSID",
-        value: this.configService.get<string>("YT_3PSID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "__Secure-3PAPISID",
-        value: this.configService.get<string>("YT_3PAPISID") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "LOGIN_INFO",
-        value: this.configService.get<string>("YT_LOGIN_INFO") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "VISITOR_INFO1_LIVE",
-        value: this.configService.get<string>("YT_VISITOR_INFO") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "PREF",
-        value: this.configService.get<string>("YT_PREF") || "",
-        domain: ".youtube.com",
-      },
-      {
-        name: "__Secure-YEC",
-        value: this.configService.get<string>("YT_SECURE_YEC") || "",
-        domain: ".youtube.com",
-      },
-    ];
+  private isValidYoutubeUrl(url: string): boolean {
+    const videoPattern =
+      /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[a-zA-Z0-9_-]+/;
+    const playlistPattern =
+      /^(https?:\/\/)?(www\.)?(youtube\.com\/playlist\?list=)[a-zA-Z0-9_-]+$/;
+    return videoPattern.test(url) || playlistPattern.test(url);
+  }
+
+  private cleanYoutubeUrl(url: string): string {
+    try {
+      const urlObj = new URL(url);
+
+      // Si c'est une URL de playlist pure (sans watch?v=), on la laisse telle quelle
+      if (urlObj.pathname === "/playlist") {
+        return url;
+      }
+
+      // Si c'est une URL de vidéo (avec ou sans paramètres de playlist)
+      if (urlObj.pathname === "/watch") {
+        const videoId = urlObj.searchParams.get("v");
+        if (!videoId) {
+          throw new Error("ID de vidéo non trouvé dans l'URL");
+        }
+        // On ne garde que le paramètre v pour les vidéos individuelles
+        return `https://www.youtube.com/watch?v=${videoId}`;
+      }
+
+      // Pour les URLs youtu.be
+      if (urlObj.hostname === "youtu.be") {
+        const videoId = urlObj.pathname.slice(1); // Enlever le '/' initial
+        return `https://www.youtube.com/watch?v=${videoId}`;
+      }
+
+      return url;
+    } catch (error) {
+      this.logger.error(`Erreur lors du nettoyage de l'URL: ${error}`);
+      return url;
+    }
   }
 
   private async createQueueItem(
@@ -193,10 +133,19 @@ export class MusicService implements OnModuleInit {
   ): Promise<QueueItem> {
     const maxRetries = 3;
 
+    // Vérifier si l'URL est valide
+    if (!this.isValidYoutubeUrl(url)) {
+      throw new Error("URL YouTube invalide");
+    }
+
+    // Nettoyer l'URL
+    const cleanedUrl = this.cleanYoutubeUrl(url);
+    this.logger.log(`URL nettoyée: ${cleanedUrl}`);
+
     while (retryCount < maxRetries) {
       try {
         this.logger.log(
-          `Tentative ${retryCount + 1}/${maxRetries} de téléchargement pour ${url}`
+          `Tentative ${retryCount + 1}/${maxRetries} de téléchargement pour ${cleanedUrl}`
         );
 
         // Créer un nom de fichier unique basé sur l'horodatage
@@ -206,7 +155,7 @@ export class MusicService implements OnModuleInit {
 
         // Exécuter yt-dlp pour télécharger l'audio
         this.logger.log("Démarrage du téléchargement avec yt-dlp...");
-        const downloadCommand = `yt-dlp -x --audio-format mp3 --audio-quality 0 -o "${outputFile}" "${url}" --verbose`;
+        const downloadCommand = `yt-dlp -x --audio-format mp3 --audio-quality 5 -o "${outputFile}" "${cleanedUrl}" --verbose`;
         this.logger.log(`Commande exécutée: ${downloadCommand}`);
 
         const { stdout, stderr } = await exec(downloadCommand);
@@ -232,7 +181,7 @@ export class MusicService implements OnModuleInit {
 
         // Obtenir les informations de la vidéo
         this.logger.log("Récupération du titre de la vidéo...");
-        const titleCommand = `yt-dlp --get-title "${url}" --verbose`;
+        const titleCommand = `yt-dlp --get-title "${cleanedUrl}" --verbose`;
         this.logger.log(`Commande exécutée: ${titleCommand}`);
 
         const { stdout: videoInfo, stderr: titleError } =
@@ -276,7 +225,7 @@ export class MusicService implements OnModuleInit {
         this.logger.log("QueueItem créé avec succès");
         return {
           title,
-          url,
+          url: cleanedUrl,
           resource,
           filePath: outputFile,
         };
@@ -303,165 +252,6 @@ export class MusicService implements OnModuleInit {
     }
 
     throw new Error("Impossible de créer l'élément de la file d'attente");
-  }
-
-  private async handlePlaylist(
-    url: string,
-    interaction: ChatInputCommandInteraction
-  ): Promise<QueueItem[]> {
-    try {
-      const playlistId = url.match(/[?&]list=([^&]+)/)?.[1];
-      if (!playlistId) {
-        throw new Error("Invalid playlist URL");
-      }
-
-      const apiKey = this.configService.get<string>("YOUTUBE_API_KEY");
-      if (!apiKey) {
-        throw new Error("YouTube API key not configured");
-      }
-
-      const items: QueueItem[] = [];
-      let nextPageToken: string | undefined;
-      let totalVideos = 0;
-      let processedVideos = 0;
-      let skippedVideos = 0;
-
-      // Première requête pour obtenir le nombre total de vidéos
-      const initialResponse = await axios.get<YouTubePlaylistResponse>(
-        `https://www.googleapis.com/youtube/v3/playlists`,
-        {
-          params: {
-            part: "contentDetails",
-            id: playlistId,
-            key: apiKey,
-          },
-        }
-      );
-
-      if (initialResponse.data.items?.[0]?.contentDetails?.itemCount) {
-        totalVideos = parseInt(
-          initialResponse.data.items[0].contentDetails.itemCount
-        );
-      }
-
-      await interaction.editReply(
-        `🎵 Chargement de la playlist... (0/${totalVideos} vidéos)`
-      );
-
-      do {
-        const response = await axios.get<YouTubePlaylistItemsResponse>(
-          `https://www.googleapis.com/youtube/v3/playlistItems`,
-          {
-            params: {
-              part: "snippet",
-              playlistId,
-              maxResults: 50,
-              key: apiKey,
-              pageToken: nextPageToken,
-            },
-          }
-        );
-
-        const videos = response.data.items;
-        if (!videos || videos.length === 0) {
-          break;
-        }
-
-        for (const video of videos) {
-          try {
-            const videoId = video.snippet.resourceId.videoId;
-            const videoUrl = `https://www.youtube.com/watch?v=${videoId}`;
-
-            // Vérifier d'abord si la vidéo est disponible
-            try {
-              await ytdl.getBasicInfo(videoUrl, { agent: this.agent });
-              // eslint-disable-next-line @typescript-eslint/no-unused-vars
-            } catch (error) {
-              this.logger.warn(
-                `Vidéo indisponible ou supprimée: ${video.snippet.title}`
-              );
-              skippedVideos++;
-              processedVideos++;
-              continue;
-            }
-
-            const timestamp = Date.now();
-            const outputFile = path.join(this.tempDir, `${timestamp}.mp3`);
-
-            // Télécharger l'audio avec yt-dlp
-            const { stderr } = await exec(
-              `yt-dlp -x --audio-format mp3 --audio-quality 0 -o "${outputFile}" "${videoUrl}"`
-            );
-
-            if (stderr) {
-              this.logger.warn(`yt-dlp warning: ${stderr}`);
-            }
-
-            // Vérifier que le fichier existe
-            if (!fs.existsSync(outputFile)) {
-              throw new Error(
-                "Le fichier audio n'a pas été téléchargé correctement"
-              );
-            }
-
-            // Obtenir les informations de la vidéo
-            const { stdout: videoInfo } = await exec(
-              `yt-dlp --get-title "${videoUrl}"`
-            );
-            const title = videoInfo.trim();
-
-            const resource = createAudioResource(outputFile, {
-              inputType: StreamType.Arbitrary,
-              inlineVolume: true,
-            });
-
-            if (resource.volume) {
-              resource.volume.setVolume(0.5);
-            }
-
-            items.push({
-              title,
-              url: videoUrl,
-              resource,
-              filePath: outputFile,
-            });
-
-            processedVideos++;
-            // Mettre à jour le message tous les 5 vidéos ou à la fin
-            if (processedVideos % 5 === 0 || processedVideos === totalVideos) {
-              const progress = Math.round(
-                (processedVideos / totalVideos) * 100
-              );
-              await interaction.editReply(
-                `🎵 Chargement de la playlist... (${processedVideos}/${totalVideos} vidéos) - ${progress}%\n${skippedVideos > 0 ? `⚠️ ${skippedVideos} vidéo(s) ignorée(s) car indisponible(s)` : ""}`
-              );
-            }
-          } catch (error) {
-            this.logger.warn(
-              `Vidéo ignorée: ${video.snippet.title} - ${error instanceof Error ? error.message : "Erreur inconnue"}`
-            );
-            skippedVideos++;
-            processedVideos++;
-          }
-        }
-
-        nextPageToken = response.data.nextPageToken;
-      } while (nextPageToken);
-
-      if (items.length === 0) {
-        throw new Error("Aucune vidéo disponible dans la playlist");
-      }
-
-      // Message final avec le résumé
-      await interaction.editReply(
-        `✅ Chargement terminé !\n${items.length} vidéo(s) chargée(s)\n${skippedVideos > 0 ? `⚠️ ${skippedVideos} vidéo(s) ignorée(s) car indisponible(s)` : ""}`
-      );
-
-      return items;
-    } catch (error) {
-      this.logger.error(`Error processing playlist: ${error}`);
-      throw error;
-    }
   }
 
   private createPlayer(guildId: string): AudioPlayer {
@@ -633,13 +423,6 @@ export class MusicService implements OnModuleInit {
       this.logger.error("Failed to start playback");
       throw error;
     }
-  }
-
-  private isValidYoutubeUrl(url: string): boolean {
-    const videoPattern = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+$/;
-    const playlistPattern =
-      /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+playlist\?list=.+$/;
-    return videoPattern.test(url) || playlistPattern.test(url);
   }
 
   public async playMusic(
