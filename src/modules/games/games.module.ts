@@ -1,4 +1,4 @@
-﻿import { Module, forwardRef } from "@nestjs/common";
+﻿import { Module } from "@nestjs/common";
 import { BlindtestService } from "./services/blindtest.service";
 import { MusicModule } from "../music/music.module";
 import { AiModule } from "../ai/ai.module";
@@ -7,7 +7,7 @@ import { BlindtestStartCommand } from "./commands/blindtest-start.command";
 import { BlindtestStopCommand } from "./commands/blindtest-stop.command";
 
 @Module({
-  imports: [forwardRef(() => MusicModule), AiModule],
+  imports: [AiModule, MusicModule],
   controllers: [],
   providers: [
     BlindtestService,

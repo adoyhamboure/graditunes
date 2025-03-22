@@ -1,10 +1,4 @@
-import {
-  Injectable,
-  Logger,
-  OnModuleInit,
-  Inject,
-  forwardRef,
-} from "@nestjs/common";
+import { Injectable, Logger, OnModuleInit } from "@nestjs/common";
 import {
   AudioPlayerStatus,
   createAudioPlayer,
@@ -20,13 +14,15 @@ import {
 import { TextChannel, ChatInputCommandInteraction } from "discord.js";
 import * as ytdl from "@distube/ytdl-core";
 import { ConfigService } from "@nestjs/config";
-import { BlindtestService } from "../../games/services/blindtest.service";
 import axios from "axios";
 import * as fs from "fs";
 import * as path from "path";
-import * as os from "os";
+import { promisify } from "util";
+import { exec as execCallback } from "child_process";
 import { QueueItem } from "../interfaces/queueItem.interface";
 import { GuildQueue } from "../interfaces/guildQueue.interface";
+
+const exec = promisify(execCallback);
 
 interface Cookie {
   name: string;
@@ -72,12 +68,8 @@ export class MusicService implements OnModuleInit {
   private agent: ytdl.Agent;
   private tempDir: string;
 
-  constructor(
-    private readonly configService: ConfigService,
-    @Inject(forwardRef(() => BlindtestService))
-    private readonly blindtestService: BlindtestService
-  ) {
-    this.tempDir = path.join(os.tmpdir(), "graditunes");
+  constructor(private readonly configService: ConfigService) {
+    this.tempDir = path.join(process.cwd(), "temp");
     if (!fs.existsSync(this.tempDir)) {
       fs.mkdirSync(this.tempDir);
     }
@@ -203,101 +195,109 @@ export class MusicService implements OnModuleInit {
 
     while (retryCount < maxRetries) {
       try {
-        // Essayer d'abord sans les cookies
-        const stream = ytdl(url, {
-          filter: "audioonly",
-          quality: "highestaudio",
-          highWaterMark: 1 << 25,
-          requestOptions: {
-            headers: {
-              Range: "bytes=0-",
-            },
-          },
-          begin: 0,
-          liveBuffer: 10000,
-          dlChunkSize: 0,
-          range: {
-            start: 0,
-            end: 0,
-          },
-        });
+        this.logger.log(
+          `Tentative ${retryCount + 1}/${maxRetries} de téléchargement pour ${url}`
+        );
 
-        const videoInfo = await ytdl.getBasicInfo(url);
+        // Créer un nom de fichier unique basé sur l'horodatage
+        const timestamp = Date.now();
+        const outputFile = path.join(this.tempDir, `${timestamp}.mp3`);
+        this.logger.log(`Fichier de sortie: ${outputFile}`);
 
-        const resource = createAudioResource(stream, {
+        // Exécuter yt-dlp pour télécharger l'audio
+        this.logger.log("Démarrage du téléchargement avec yt-dlp...");
+        const downloadCommand = `yt-dlp -x --audio-format mp3 --audio-quality 0 -o "${outputFile}" "${url}" --verbose`;
+        this.logger.log(`Commande exécutée: ${downloadCommand}`);
+
+        const { stdout, stderr } = await exec(downloadCommand);
+
+        // Log de la sortie standard
+        if (stdout) {
+          this.logger.log(`yt-dlp stdout: ${stdout}`);
+        }
+
+        // Log des avertissements/erreurs
+        if (stderr) {
+          this.logger.warn(`yt-dlp stderr: ${stderr}`);
+        }
+
+        // Vérifier que le fichier existe
+        if (!fs.existsSync(outputFile)) {
+          this.logger.error(`Le fichier ${outputFile} n'a pas été créé`);
+          throw new Error(
+            "Le fichier audio n'a pas été téléchargé correctement"
+          );
+        }
+        this.logger.log(`Fichier téléchargé avec succès: ${outputFile}`);
+
+        // Obtenir les informations de la vidéo
+        this.logger.log("Récupération du titre de la vidéo...");
+        const titleCommand = `yt-dlp --get-title "${url}" --verbose`;
+        this.logger.log(`Commande exécutée: ${titleCommand}`);
+
+        const { stdout: videoInfo, stderr: titleError } =
+          await exec(titleCommand);
+
+        if (titleError) {
+          this.logger.warn(
+            `Erreur lors de la récupération du titre: ${titleError}`
+          );
+        }
+
+        const title = videoInfo.trim();
+        this.logger.log(`Titre récupéré: ${title}`);
+
+        // Vérifier la taille du fichier
+        const stats = fs.statSync(outputFile);
+        this.logger.log(`Taille du fichier: ${stats.size} bytes`);
+
+        // Créer la ressource audio
+        this.logger.log("Création de la ressource audio...");
+        const resource = createAudioResource(outputFile, {
           inputType: StreamType.Arbitrary,
           inlineVolume: true,
-          metadata: {
-            title: videoInfo.videoDetails.title,
-          },
         });
+
+        if (!resource) {
+          throw new Error("Impossible de créer la ressource audio");
+        }
 
         if (resource.volume) {
           resource.volume.setVolume(0.5);
+          this.logger.log("Volume de la ressource réglé à 0.5");
         }
 
+        // Vérifier l'état de la ressource
+        this.logger.log(
+          `État de la ressource: ${resource.ended ? "Terminé" : "Prêt"}`
+        );
+        this.logger.log(`Type de ressource: ${resource.playbackDuration}`);
+
+        this.logger.log("QueueItem créé avec succès");
         return {
-          title: videoInfo.videoDetails.title,
+          title,
           url,
           resource,
+          filePath: outputFile,
         };
       } catch (error) {
-        this.logger.error(`Error creating queue item: ${error}`);
-
-        // Si l'erreur persiste, essayer avec les cookies
-        if (retryCount === 1) {
-          try {
-            const stream = ytdl(url, {
-              filter: "audioonly",
-              quality: "highestaudio",
-              highWaterMark: 1 << 25,
-              agent: this.agent,
-              requestOptions: {
-                headers: {
-                  Range: "bytes=0-",
-                },
-              },
-              begin: 0,
-              liveBuffer: 10000,
-              dlChunkSize: 0,
-              range: {
-                start: 0,
-                end: 0,
-              },
-            });
-
-            const videoInfo = await ytdl.getBasicInfo(url, {
-              agent: this.agent,
-            });
-
-            const resource = createAudioResource(stream, {
-              inputType: StreamType.Arbitrary,
-              inlineVolume: true,
-              metadata: {
-                title: videoInfo.videoDetails.title,
-              },
-            });
-
-            if (resource.volume) {
-              resource.volume.setVolume(0.5);
-            }
-
-            return {
-              title: videoInfo.videoDetails.title,
-              url,
-              resource,
-            };
-          } catch (cookieError) {
-            this.logger.error(`Error with cookies: ${cookieError}`);
-          }
+        this.logger.error(
+          `Erreur lors de la création du QueueItem: ${error instanceof Error ? error.message : "Erreur inconnue"}`
+        );
+        if (error instanceof Error && error.stack) {
+          this.logger.error(`Stack trace: ${error.stack}`);
         }
-
         retryCount++;
+
         if (retryCount === maxRetries) {
           throw new Error(
             `Impossible de lire la vidéo après ${maxRetries} tentatives`
           );
         }
+
+        this.logger.log(
+          `Attente de ${1000 * retryCount}ms avant la prochaine tentative...`
+        );
         await new Promise((resolve) => setTimeout(resolve, 1000 * retryCount));
       }
     }
@@ -385,17 +385,32 @@ export class MusicService implements OnModuleInit {
               continue;
             }
 
-            const videoInfo = await ytdl.getBasicInfo(videoUrl, {
-              agent: this.agent,
-            });
-            const stream = ytdl(videoUrl, {
-              filter: "audioonly",
-              quality: "highestaudio",
-              highWaterMark: 1 << 25,
-              agent: this.agent,
-            });
+            const timestamp = Date.now();
+            const outputFile = path.join(this.tempDir, `${timestamp}.mp3`);
 
-            const resource = createAudioResource(stream, {
+            // Télécharger l'audio avec yt-dlp
+            const { stderr } = await exec(
+              `yt-dlp -x --audio-format mp3 --audio-quality 0 -o "${outputFile}" "${videoUrl}"`
+            );
+
+            if (stderr) {
+              this.logger.warn(`yt-dlp warning: ${stderr}`);
+            }
+
+            // Vérifier que le fichier existe
+            if (!fs.existsSync(outputFile)) {
+              throw new Error(
+                "Le fichier audio n'a pas été téléchargé correctement"
+              );
+            }
+
+            // Obtenir les informations de la vidéo
+            const { stdout: videoInfo } = await exec(
+              `yt-dlp --get-title "${videoUrl}"`
+            );
+            const title = videoInfo.trim();
+
+            const resource = createAudioResource(outputFile, {
               inputType: StreamType.Arbitrary,
               inlineVolume: true,
             });
@@ -405,9 +420,10 @@ export class MusicService implements OnModuleInit {
             }
 
             items.push({
-              title: videoInfo.videoDetails.title,
+              title,
               url: videoUrl,
               resource,
+              filePath: outputFile,
             });
 
             processedVideos++;
@@ -455,7 +471,6 @@ export class MusicService implements OnModuleInit {
       },
     });
 
-    // Add event listeners only once when creating the player
     player.on(AudioPlayerStatus.Idle, () => {
       this.logger.log("Player is idle");
       const queue = this.queues.get(guildId);
@@ -465,8 +480,33 @@ export class MusicService implements OnModuleInit {
       }
     });
 
+    player.on(AudioPlayerStatus.Playing, () => {
+      this.logger.log("Le lecteur a commencé à jouer");
+    });
+
+    player.on(AudioPlayerStatus.Buffering, () => {
+      this.logger.log("Le lecteur est en train de mettre en mémoire tampon");
+    });
+
+    player.on(AudioPlayerStatus.AutoPaused, () => {
+      this.logger.log("Le lecteur s'est mis en pause automatiquement");
+    });
+
+    player.on(AudioPlayerStatus.Paused, () => {
+      this.logger.log("Le lecteur est en pause");
+    });
+
     player.on("error", (error: Error) => {
       this.logger.error(`Player error: ${error.message}`);
+      if (error.stack) {
+        this.logger.error(`Stack trace: ${error.stack}`);
+      }
+    });
+
+    player.on("stateChange", (oldState, newState) => {
+      this.logger.log(
+        `État du lecteur changé de ${oldState.status} à ${newState.status}`
+      );
     });
 
     this.players.set(guildId, player);
@@ -497,12 +537,14 @@ export class MusicService implements OnModuleInit {
         title?: unknown;
         url?: unknown;
         resource?: unknown;
+        filePath?: unknown;
       };
       return (
         typeof queueItem.title === "string" &&
         typeof queueItem.url === "string" &&
         queueItem.resource !== undefined &&
-        queueItem.resource !== null
+        queueItem.resource !== null &&
+        typeof queueItem.filePath === "string"
       );
     };
 
@@ -511,7 +553,36 @@ export class MusicService implements OnModuleInit {
       return;
     }
 
+    // Nettoyer le fichier de la chanson précédente si elle existe
+    if (queue.currentIndex > 0) {
+      const previousItem = queue.items[queue.currentIndex - 1];
+      if (
+        isValidQueueItem(previousItem) &&
+        fs.existsSync(previousItem.filePath)
+      ) {
+        try {
+          fs.unlinkSync(previousItem.filePath);
+          this.logger.log(`Fichier nettoyé: ${previousItem.filePath}`);
+        } catch (error) {
+          this.logger.error(`Erreur lors du nettoyage du fichier: ${error}`);
+        }
+      }
+    }
+
     if (queue.currentIndex >= queue.items.length) {
+      // Nettoyer le dernier fichier
+      const lastItem = queue.items[queue.items.length - 1];
+      if (isValidQueueItem(lastItem) && fs.existsSync(lastItem.filePath)) {
+        try {
+          fs.unlinkSync(lastItem.filePath);
+          this.logger.log(`Dernier fichier nettoyé: ${lastItem.filePath}`);
+        } catch (error) {
+          this.logger.error(
+            `Erreur lors du nettoyage du dernier fichier: ${error}`
+          );
+        }
+      }
+
       queue.currentIndex = 0;
       this.queues.delete(guildId);
       const textChannel = this.textChannels.get(guildId);
@@ -527,10 +598,29 @@ export class MusicService implements OnModuleInit {
       return;
     }
 
+    this.logger.log(`Tentative de lecture de: ${currentItem.title}`);
+    this.logger.log(`Chemin du fichier: ${currentItem.filePath}`);
+
+    // Vérifier que le fichier existe toujours
+    if (!fs.existsSync(currentItem.filePath)) {
+      this.logger.error(`Le fichier ${currentItem.filePath} n'existe pas`);
+      return;
+    }
+
+    // Vérifier la taille du fichier
+    const stats = fs.statSync(currentItem.filePath);
+    this.logger.log(`Taille du fichier à lire: ${stats.size} bytes`);
+
     player.play(currentItem.resource);
 
     try {
+      this.logger.log(
+        `État du lecteur avant la lecture: ${player.state.status}`
+      );
       await entersState(player, AudioPlayerStatus.Playing, 10_000);
+      this.logger.log(
+        `État du lecteur après la lecture: ${player.state.status}`
+      );
       this.logger.log(`Now playing: ${currentItem.title}`);
 
       const textChannel = this.textChannels.get(guildId);
