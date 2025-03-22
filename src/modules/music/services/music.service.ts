@@ -11,7 +11,11 @@ import {
   AudioPlayer,
   VoiceConnection,
 } from "@discordjs/voice";
-import { TextChannel, ChatInputCommandInteraction } from "discord.js";
+import {
+  TextChannel,
+  ChatInputCommandInteraction,
+  EmbedBuilder,
+} from "discord.js";
 import { ConfigService } from "@nestjs/config";
 import axios from "axios";
 import * as fs from "fs";
@@ -87,6 +91,24 @@ export class MusicService implements OnModuleInit {
     }
   }
 
+  private async cleanupTempFiles(): Promise<void> {
+    if (fs.existsSync(this.tempDir)) {
+      try {
+        await new Promise((resolve) => setTimeout(resolve, 1000));
+        const files = fs.readdirSync(this.tempDir);
+        for (const file of files) {
+          const filePath = path.join(this.tempDir, file);
+          fs.unlinkSync(filePath);
+          this.logger.log(`Fichier temporaire supprimés: ${filePath}`);
+        }
+      } catch (error) {
+        this.logger.error(
+          `Erreur lors du nettoyage des fichiers temporaires: ${error}`
+        );
+      }
+    }
+  }
+
   private isValidYoutubeUrl(url: string): boolean {
     const videoPattern =
       /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[a-zA-Z0-9_-]+/;
@@ -155,7 +177,7 @@ export class MusicService implements OnModuleInit {
 
         // Exécuter yt-dlp pour télécharger l'audio
         this.logger.log("Démarrage du téléchargement avec yt-dlp...");
-        const downloadCommand = `yt-dlp -x --audio-format mp3 --audio-quality 5 -o "${outputFile}" "${cleanedUrl}" --verbose`;
+        const downloadCommand = `yt-dlp -x --audio-format mp3 --audio-quality 3 -o "${outputFile}" "${cleanedUrl}" --verbose`;
         this.logger.log(`Commande exécutée: ${downloadCommand}`);
 
         const { stdout, stderr } = await exec(downloadCommand);
@@ -254,6 +276,45 @@ export class MusicService implements OnModuleInit {
     throw new Error("Impossible de créer l'élément de la file d'attente");
   }
 
+  private async updateQueueMessage(guildId: string): Promise<void> {
+    const textChannel = this.textChannels.get(guildId);
+    const queue = this.queues.get(guildId);
+
+    if (!textChannel || !queue) return;
+
+    const embed = new EmbedBuilder()
+      .setTitle("File d'attente mise à jour")
+      .setColor("#0099ff");
+
+    // Musique en cours
+    const currentSong = queue.items[queue.currentIndex];
+    embed.addFields({
+      name: "🎶 En cours de lecture",
+      value: `**${currentSong.title}**`,
+      inline: false,
+    });
+
+    // Musiques à venir
+    const upcomingSongs = queue.items.slice(queue.currentIndex + 1);
+    if (upcomingSongs.length > 0) {
+      const upcomingList = upcomingSongs
+        .map((item, index) => `${index + 1}. ${item.title}`)
+        .join("\n");
+      embed.addFields({
+        name: "📋 À venir",
+        value: upcomingList,
+        inline: false,
+      });
+    }
+
+    // Informations supplémentaires
+    embed.setFooter({
+      text: `${queue.items.length} musiques au total • ${queue.currentIndex + 1}/${queue.items.length}`,
+    });
+
+    await textChannel.send({ embeds: [embed] });
+  }
+
   private createPlayer(guildId: string): AudioPlayer {
     const player = createAudioPlayer({
       behaviors: {
@@ -267,6 +328,10 @@ export class MusicService implements OnModuleInit {
       if (queue) {
         queue.currentIndex++;
         void this.playNext(guildId);
+        // Mettre à jour le message de la file d'attente
+        void this.updateQueueMessage(guildId);
+      } else {
+        void this.cleanupTempFiles();
       }
     });
 
@@ -351,10 +416,22 @@ export class MusicService implements OnModuleInit {
         fs.existsSync(previousItem.filePath)
       ) {
         try {
-          fs.unlinkSync(previousItem.filePath);
-          this.logger.log(`Fichier nettoyé: ${previousItem.filePath}`);
+          // Attendre un peu pour s'assurer que le fichier n'est plus utilisé
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
+          // Vérifier si le fichier existe toujours avant de le supprimer
+          if (fs.existsSync(previousItem.filePath)) {
+            fs.unlinkSync(previousItem.filePath);
+            this.logger.log(`Fichier nettoyé: ${previousItem.filePath}`);
+          }
         } catch (error) {
-          this.logger.error(`Erreur lors du nettoyage du fichier: ${error}`);
+          if ((error as { code?: string }).code === "EBUSY") {
+            this.logger.warn(
+              `Le fichier ${previousItem.filePath} est encore en cours d'utilisation, il sera nettoyé plus tard`
+            );
+          } else {
+            this.logger.error(`Erreur lors du nettoyage du fichier: ${error}`);
+          }
         }
       }
     }
@@ -364,12 +441,24 @@ export class MusicService implements OnModuleInit {
       const lastItem = queue.items[queue.items.length - 1];
       if (isValidQueueItem(lastItem) && fs.existsSync(lastItem.filePath)) {
         try {
-          fs.unlinkSync(lastItem.filePath);
-          this.logger.log(`Dernier fichier nettoyé: ${lastItem.filePath}`);
+          // Attendre un peu pour s'assurer que le fichier n'est plus utilisé
+          await new Promise((resolve) => setTimeout(resolve, 1000));
+
+          // Vérifier si le fichier existe toujours avant de le supprimer
+          if (fs.existsSync(lastItem.filePath)) {
+            fs.unlinkSync(lastItem.filePath);
+            this.logger.log(`Dernier fichier nettoyé: ${lastItem.filePath}`);
+          }
         } catch (error) {
-          this.logger.error(
-            `Erreur lors du nettoyage du dernier fichier: ${error}`
-          );
+          if ((error as { code?: string }).code === "EBUSY") {
+            this.logger.warn(
+              `Le fichier ${lastItem.filePath} est encore en cours d'utilisation, il sera nettoyé plus tard`
+            );
+          } else {
+            this.logger.error(
+              `Erreur lors du nettoyage du dernier fichier: ${error}`
+            );
+          }
         }
       }
 
@@ -413,6 +502,9 @@ export class MusicService implements OnModuleInit {
       );
       this.logger.log(`Now playing: ${currentItem.title}`);
 
+      // Mettre à jour le message de la file d'attente
+      await this.updateQueueMessage(guildId);
+
       const textChannel = this.textChannels.get(guildId);
       if (textChannel) {
         await textChannel.send(
@@ -441,9 +533,16 @@ export class MusicService implements OnModuleInit {
         throw new Error("Channel not found");
       }
 
+      // Stocker le canal de texte pour les messages
+      const textChannel = interaction.channel as TextChannel;
+      this.textChannels.set(guildId, textChannel);
+
+      await interaction.editReply("🔍 Recherche de votre musique...");
+
       // Create or get connection
       let connection = this.connections.get(guildId);
       if (!connection) {
+        await interaction.editReply("🎵 Connexion au canal vocal...");
         connection = joinVoiceChannel({
           channelId: voiceChannelId,
           guildId: guildId,
@@ -466,12 +565,18 @@ export class MusicService implements OnModuleInit {
         await entersState(connection, VoiceConnectionStatus.Ready, 20_000);
       } catch {
         this.logger.error("Connection failed to become ready");
+        await interaction.editReply(
+          "❌ Impossible de se connecter au canal vocal. Veuillez réessayer."
+        );
         throw new Error("Échec de la connexion au canal vocal");
       }
 
       // Subscribe to player
       const subscription = connection.subscribe(player);
       if (!subscription) {
+        await interaction.editReply(
+          "❌ Une erreur est survenue lors de la connexion au canal vocal."
+        );
         throw new Error("Échec de la souscription au lecteur");
       }
 
@@ -485,6 +590,8 @@ export class MusicService implements OnModuleInit {
         this.queues.set(guildId, queue);
       }
 
+      await interaction.editReply("⏬ Téléchargement de votre musique...");
+
       // Create queue item
       const queueItem = await this.createQueueItem(query);
 
@@ -495,22 +602,22 @@ export class MusicService implements OnModuleInit {
       ) {
         queue.items = [queueItem];
         queue.currentIndex = 0;
+        await interaction.editReply("▶️ Démarrage de la lecture...");
         // Start playing
         await this.playNext(guildId);
       } else {
         // Sinon, ajouter à la file d'attente
         queue.items.push(queueItem);
-        // Afficher un message dans le canal de texte
-        const textChannel = this.textChannels.get(guildId);
-        if (textChannel) {
-          await textChannel.send(
-            `✅ **${queueItem.title}** a été ajouté à la file d'attente !`
-          );
-        }
+        await interaction.editReply(
+          `✅ **${queueItem.title}** a été ajouté à la file d'attente !`
+        );
       }
     } catch (error) {
       this.logger.error(
         `Error playing music: ${error instanceof Error ? error.message : "Unknown error"}`
+      );
+      await interaction.editReply(
+        "❌ Une erreur est survenue lors de la lecture de la musique. Veuillez réessayer."
       );
       throw error;
     }

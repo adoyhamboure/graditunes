@@ -24,14 +24,34 @@ export class QueueCommand {
       }
 
       const embed = new EmbedBuilder()
-        .setTitle("File d'attente")
+        .setTitle("🎵 File d'attente")
         .setColor("#0099ff");
 
-      const queueList = queue.items
-        .map((item, index) => `${index + 1}. ${item.title}`)
-        .join("\n");
+      // Musique en cours
+      const currentSong = queue.items[queue.currentIndex];
+      embed.addFields({
+        name: "🎶 En cours de lecture",
+        value: `**${currentSong.title}**`,
+        inline: false,
+      });
 
-      embed.setDescription(queueList);
+      // Musiques à venir
+      const upcomingSongs = queue.items.slice(queue.currentIndex + 1);
+      if (upcomingSongs.length > 0) {
+        const upcomingList = upcomingSongs
+          .map((item, index) => `${index + 1}. ${item.title}`)
+          .join("\n");
+        embed.addFields({
+          name: "📋 À venir",
+          value: upcomingList,
+          inline: false,
+        });
+      }
+
+      // Informations supplémentaires
+      embed.setFooter({
+        text: `${queue.items.length} musiques au total • ${queue.currentIndex + 1}/${queue.items.length}`,
+      });
 
       await interaction.editReply({
         embeds: [embed],
