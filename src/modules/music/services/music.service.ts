@@ -110,11 +110,51 @@ export class MusicService implements OnModuleInit {
   }
 
   private isValidYoutubeUrl(url: string): boolean {
-    const videoPattern =
-      /^(https?:\/\/)?(www\.)?(youtube\.com\/watch\?v=|youtu\.be\/)[a-zA-Z0-9_-]+/;
-    const playlistPattern =
-      /^(https?:\/\/)?(www\.)?(youtube\.com\/playlist\?list=)[a-zA-Z0-9_-]+$/;
-    return videoPattern.test(url) || playlistPattern.test(url);
+    const pattern = /^(https?:\/\/)?(www\.)?(youtube\.com|youtu\.be)\/.+/;
+    return pattern.test(url);
+  }
+
+  private isPlaylistUrl(url: string): boolean {
+    return url.includes("playlist?list=");
+  }
+
+  private async getPlaylistInfo(
+    url: string
+  ): Promise<{ title: string; urls: string[] }> {
+    try {
+      // Récupérer d'abord le titre de la playlist
+      const { stdout: playlistTitle } = await exec(
+        `yt-dlp --no-warnings --print "%(playlist_title)s" --playlist-items 1 "${url}"`
+      );
+
+      // Récupérer ensuite tous les IDs des vidéos
+      const { stdout: videoIds } = await exec(
+        `yt-dlp --no-warnings --print "%(id)s" --flat-playlist "${url}"`
+      );
+
+      const title = playlistTitle.trim();
+      const ids = videoIds.split("\n").filter((id) => id.trim());
+
+      // Convertir les IDs en URLs complètes
+      const urls = ids.map((id) => `https://www.youtube.com/watch?v=${id}`);
+
+      this.logger.log(`Playlist trouvée: ${title} avec ${urls.length} vidéos`);
+      urls.forEach((url, index) => {
+        this.logger.debug(`Vidéo ${index + 1}: ${url}`);
+      });
+
+      return {
+        title,
+        urls,
+      };
+    } catch (error) {
+      this.logger.error(
+        `Erreur lors de la récupération des informations de la playlist: ${error}`
+      );
+      throw new Error(
+        "Impossible de récupérer les informations de la playlist"
+      );
+    }
   }
 
   private cleanYoutubeUrl(url: string): string {
@@ -177,7 +217,7 @@ export class MusicService implements OnModuleInit {
 
         // Exécuter yt-dlp pour télécharger l'audio
         this.logger.log("Démarrage du téléchargement avec yt-dlp...");
-        const downloadCommand = `yt-dlp -x --audio-format mp3 --audio-quality 3 -o "${outputFile}" "${cleanedUrl}" --verbose`;
+        const downloadCommand = `yt-dlp --encoding utf8 -x --audio-format mp3 --audio-quality 3 -o "${outputFile}" "${cleanedUrl}" --verbose`;
         this.logger.log(`Commande exécutée: ${downloadCommand}`);
 
         const { stdout, stderr } = await exec(downloadCommand);
@@ -203,7 +243,7 @@ export class MusicService implements OnModuleInit {
 
         // Obtenir les informations de la vidéo
         this.logger.log("Récupération du titre de la vidéo...");
-        const titleCommand = `yt-dlp --get-title "${cleanedUrl}" --verbose`;
+        const titleCommand = `yt-dlp --encoding utf8 --get-title "${cleanedUrl}" --verbose`;
         this.logger.log(`Commande exécutée: ${titleCommand}`);
 
         const { stdout: videoInfo, stderr: titleError } =
@@ -517,6 +557,20 @@ export class MusicService implements OnModuleInit {
     }
   }
 
+  private async updateDownloadProgress(
+    interaction: ChatInputCommandInteraction,
+    current: number,
+    total: number,
+    playlistTitle: string
+  ): Promise<void> {
+    const progress = Math.floor((current / total) * 20);
+    const progressBarFilled = "🔵".repeat(progress) + "▬".repeat(20 - progress);
+
+    await interaction.editReply({
+      content: `Téléchargement de la playlist **${playlistTitle}**\n${progressBarFilled} ${current}/${total}`,
+    });
+  }
+
   public async playMusic(
     guildId: string,
     voiceChannelId: string,
@@ -590,27 +644,93 @@ export class MusicService implements OnModuleInit {
         this.queues.set(guildId, queue);
       }
 
-      await interaction.editReply("⏬ Téléchargement de votre musique...");
-
-      // Create queue item
-      const queueItem = await this.createQueueItem(query);
-
-      // Si aucune musique n'est en cours de lecture, démarrer la nouvelle
-      if (
-        queue.items.length === 0 ||
-        player.state.status === AudioPlayerStatus.Idle
-      ) {
-        queue.items = [queueItem];
-        queue.currentIndex = 0;
-        await interaction.editReply("▶️ Démarrage de la lecture...");
-        // Start playing
-        await this.playNext(guildId);
-      } else {
-        // Sinon, ajouter à la file d'attente
-        queue.items.push(queueItem);
+      // Vérifier si c'est une playlist
+      if (this.isPlaylistUrl(query)) {
         await interaction.editReply(
-          `✅ **${queueItem.title}** a été ajouté à la file d'attente !`
+          "📋 Récupération des informations de la playlist..."
         );
+        const playlistInfo = await this.getPlaylistInfo(query);
+
+        // Afficher immédiatement la barre de progression à 0
+        await this.updateDownloadProgress(
+          interaction,
+          0,
+          playlistInfo.urls.length,
+          playlistInfo.title
+        );
+
+        // Télécharger la première musique immédiatement
+        const firstQueueItem = await this.createQueueItem(playlistInfo.urls[0]);
+
+        // Mettre à jour la progression après la première musique
+        await this.updateDownloadProgress(
+          interaction,
+          1,
+          playlistInfo.urls.length,
+          playlistInfo.title
+        );
+
+        // Si aucune musique n'est en cours de lecture, démarrer la première
+        if (
+          queue.items.length === 0 ||
+          player.state.status === AudioPlayerStatus.Idle
+        ) {
+          queue.items = [firstQueueItem];
+          queue.currentIndex = 0;
+          await this.playNext(guildId);
+        } else {
+          queue.items.push(firstQueueItem);
+        }
+
+        // Télécharger le reste des musiques en arrière-plan
+        const remainingUrls = playlistInfo.urls.slice(1);
+        let downloadedCount = 1;
+
+        for (const url of remainingUrls) {
+          try {
+            const queueItem = await this.createQueueItem(url);
+            queue.items.push(queueItem);
+            downloadedCount++;
+            await this.updateDownloadProgress(
+              interaction,
+              downloadedCount,
+              playlistInfo.urls.length,
+              playlistInfo.title
+            );
+          } catch (error) {
+            this.logger.error(
+              `Erreur lors du téléchargement de ${url}: ${error}`
+            );
+            continue;
+          }
+        }
+
+        await interaction.editReply(
+          `✅ Playlist **${playlistInfo.title}** ajoutée à la file d'attente ! (${downloadedCount}/${playlistInfo.urls.length} musiques)`
+        );
+      } else {
+        await interaction.editReply("⏬ Téléchargement de votre musique...");
+
+        // Create queue item
+        const queueItem = await this.createQueueItem(query);
+
+        // Si aucune musique n'est en cours de lecture, démarrer la nouvelle
+        if (
+          queue.items.length === 0 ||
+          player.state.status === AudioPlayerStatus.Idle
+        ) {
+          queue.items = [queueItem];
+          queue.currentIndex = 0;
+          await interaction.editReply("▶️ Démarrage de la lecture...");
+          // Start playing
+          await this.playNext(guildId);
+        } else {
+          // Sinon, ajouter à la file d'attente
+          queue.items.push(queueItem);
+          await interaction.editReply(
+            `✅ **${queueItem.title}** a été ajouté à la file d'attente !`
+          );
+        }
       }
     } catch (error) {
       this.logger.error(
